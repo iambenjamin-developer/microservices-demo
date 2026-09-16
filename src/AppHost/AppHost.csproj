@@ -1,0 +1,18 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.5.4">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <UserSecretsId>303977b6-d1f5-4335-9fe3-db96cbf63f94</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+    <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildingBlocks\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>
