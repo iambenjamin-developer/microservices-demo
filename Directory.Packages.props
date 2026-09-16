@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- Central Package Management: every NuGet version is declared once, here. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Package versions are added phase by phase as projects are introduced. -->
+  </ItemGroup>
+
+</Project>

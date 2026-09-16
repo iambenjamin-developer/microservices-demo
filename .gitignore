@@ -427,3 +427,27 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# ---- Project additions ----
+
+# Environment files (keep the example)
+.env
+.env.*
+!.env.example
+
+# Azure Functions local settings (may contain secrets)
+local.settings.json
+
+# Frontend build output
+src/Web/dist/
+src/Web/.vite/
+*.local
+
+# Test results and coverage
+TestResults/
+coverage/
+*.coverage
+*.cobertura.xml
+
+# Rider
+.idea/
