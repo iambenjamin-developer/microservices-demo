@@ -3,10 +3,15 @@ using BuildingBlocks.Contracts;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
+// Fixed Docker container names (instead of Aspire's "<resource>-<hash>") so the containers are
+// easy to find in Docker Desktop. The shared prefix keeps them grouped when sorted by name.
+const string ContainerPrefix = "msdemo-";
+
 // PostgreSQL: one server container, one database per service (database-per-service pattern).
 var postgres = builder.AddPostgres("postgres")
+    .WithContainerName($"{ContainerPrefix}postgres")
     .WithDataVolume()
-    .WithPgWeb()
+    .WithPgWeb(pgWeb => pgWeb.WithContainerName($"{ContainerPrefix}pgweb"))
     .WithLifetime(ContainerLifetime.Persistent);
 
 // Services are added phase by phase and will reference these databases.
@@ -19,8 +24,16 @@ postgres.AddDatabase("notificationsdb");
 // so the infrastructure and the code can never disagree about names.
 var serviceBus = builder.AddAzureServiceBus(Topology.ServiceBusConnectionName)
     .RunAsEmulator(emulator => emulator
+        .WithContainerName($"{ContainerPrefix}servicebus")
         .WithHostPort(5672) // fixed AMQP port so local tools (tools/servicebus-smoke.cs) can connect
         .WithLifetime(ContainerLifetime.Persistent));
+
+// The emulator stores its state in a SQL Server sidecar that Aspire adds as "<name>-mssql".
+// It is not exposed by RunAsEmulator, so look it up in the model to rename its container too.
+var serviceBusSql = builder.Resources.OfType<ContainerResource>()
+    .SingleOrDefault(r => r.Name == $"{serviceBus.Resource.Name}-mssql")
+    ?? throw new InvalidOperationException("Service Bus emulator SQL Server sidecar not found.");
+builder.CreateResourceBuilder(serviceBusSql).WithContainerName($"{ContainerPrefix}servicebus-sql");
 
 foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s => s.Topic))
 {
