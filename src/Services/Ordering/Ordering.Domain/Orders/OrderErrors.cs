@@ -13,6 +13,9 @@ public static class OrderErrors
     public static readonly Error MixedCurrencies =
         Error.Validation("Orders.MixedCurrencies", "All items of an order must be priced in the same currency.");
 
+    public static Error NotFound(Guid orderId) =>
+        Error.NotFound("Orders.NotFound", $"The order '{orderId}' was not found.");
+
     public static Error DuplicateSku(string sku) =>
         Error.Validation("Orders.DuplicateSku", $"The SKU '{sku}' appears more than once; combine it into a single item.");
 
