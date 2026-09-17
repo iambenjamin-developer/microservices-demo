@@ -107,7 +107,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Transactional Outbox | `BuildingBlocks.Messaging` used by Ordering and Inventory | Atomic "save state + publish event" |
 | Idempotent Consumer (Inbox) | Inventory, Ordering consumers, Notifications | Service Bus delivers at-least-once |
 | Dead-Letter Queue | Service Bus subscriptions (max delivery count) | Poison messages do not block processing |
-| Retry + Circuit Breaker | Ordering → Catalog `HttpClient` (`AddStandardResilienceHandler`) | Transient fault tolerance |
+| Retry + Circuit Breaker + Timeout (Polly) | Ordering → Catalog `HttpClient`: explicit Polly v8 pipeline (`AddResilienceHandler("catalog", ...)` with `AddRetry` — exponential backoff + jitter, `AddCircuitBreaker`, `AddTimeout`) | Transient fault tolerance; fail fast when Catalog is down instead of piling up requests |
 | Health Check | All services (`/health`, `/alive` via ServiceDefaults) | Operability |
 
 ### Domain-Driven Design (Ordering)
@@ -149,7 +149,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Gateway | YARP |
 | Email | MailKit (SMTP); Mailpit container locally, Gmail SMTP optional |
 | Auth | JWT Bearer (symmetric key, demo users) |
-| Resilience | `Microsoft.Extensions.Http.Resilience` |
+| Resilience | **Polly v8** through `Microsoft.Extensions.Http.Resilience`. ServiceDefaults keeps the standard handler for generic clients; the Catalog client replaces it (`RemoveAllResilienceHandlers()`) with an explicit Polly pipeline so handlers are never stacked. |
 | Observability | OpenTelemetry (traces, metrics, logs) → Aspire dashboard |
 | Tests | xUnit, NSubstitute, Shouldly, Testcontainers (PostgreSQL), `WebApplicationFactory`, NetArchTest |
 | Frontend | React, Vite, TypeScript, plain CSS |
@@ -234,21 +234,43 @@ Principle: fast tests on business rules, real infrastructure where mocks would l
 
 ## 9. Phases and checkpoints
 
-Work proceeds phase by phase. **At the end of each phase: explain what was built and why, wait for approval, then commit** (Conventional Commits) and push.
+Work proceeds phase by phase, **one working session per phase** (see [Working sessions](#working-sessions)).
+**At the end of each phase: explain what was built and why, wait for approval, then commit** (Conventional Commits),
+push, and update the **Status** column and the phase notes below.
 
-| # | Phase | Deliverables | Suggested commits |
-|---|---|---|---|
-| 0 | Plan & repo foundation | This plan, `global.json`, `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, solution (`.slnx`), `CLAUDE.md` | `docs: add implementation plan`, `build: add solution and shared build configuration` |
-| 1 | Aspire & building blocks | AppHost (PostgreSQL, Service Bus emulator with topics/subscriptions), ServiceDefaults, `Result`, contracts, `IEventBus`, Outbox/Inbox + processor | `feat(building-blocks): ...`, `feat(apphost): ...` |
-| 2 | Catalog | Entity, EF configuration, migration, seed, endpoints, validation | `feat(catalog): ...` |
-| 3 | Ordering domain | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
-| 4 | Ordering application & API | Commands/queries, decorators, repository, EF, outbox, Catalog client, consumers, integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
-| 5 | Inventory & end-to-end flow | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
-| 6 | Gateway & auth | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
-| 7 | Notifications | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
-| 8 | Web | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
-| 9 | Containers & CI | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
-| 10 | Documentation | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
+| # | Phase | Status | Deliverables | Suggested commits |
+|---|---|---|---|---|
+| 0 | Plan & repo foundation | ✅ Done | This plan, `global.json`, `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, solution (`.slnx`), `CLAUDE.md` | `docs: add implementation plan`, `build: add solution and shared build configuration` |
+| 1 | Aspire & building blocks | ✅ Done | AppHost (PostgreSQL, Service Bus emulator with topics/subscriptions), ServiceDefaults, `Result`, contracts, `IEventBus`, Outbox/Inbox + processor, Service Bus smoke test tool | `feat(building-blocks): ...`, `feat(apphost): ...`, `chore(tools): ...` |
+| 2 | Catalog | ⏳ Next | Entity, EF configuration, migration, seed (fictional brands + "Duff-Style Classic Lager"), endpoints, validation, ProblemDetails mapping for `Result` | `feat(catalog): ...` |
+| 3 | Ordering domain | ⬜ | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
+| 4 | Ordering application & API | ⬜ | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
+| 5 | Inventory & end-to-end flow | ⬜ | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
+| 6 | Gateway & auth | ⬜ | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
+| 7 | Notifications | ⬜ | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
+| 8 | Web | ⬜ | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
+| 9 | Containers & CI | ⬜ | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
+| 10 | Documentation | ⬜ | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
+
+### Phase notes
+
+Decisions and facts discovered during implementation that the next phases depend on.
+
+- **Phase 1**
+  - Service Bus is consumed through `builder.AddServiceBusMessaging()`, `services.AddOutbox<TDbContext>()`, `services.AddIntegrationEventHandler<TEvent, THandler>()` and `services.AddServiceBusSubscription<TDbContext>(Topology.Subscriptions.X)`.
+  - Each service `DbContext` must call `modelBuilder.AddMessagingTables()` (outbox/inbox, snake_case table and column names).
+  - Integration event handlers must **not** call `SaveChangesAsync`; the consumer pipeline saves business change + inbox record atomically.
+  - Emulator AMQP port is fixed to `5672`; `tools/servicebus-smoke.cs` sends/peeks/receives against it.
+  - Database resource names in the AppHost: `catalogdb`, `orderingdb`, `inventorydb`, `notificationsdb`.
+  - `ServiceDefaults` adds `AddStandardResilienceHandler()` to every `HttpClient`; clients with a custom Polly pipeline must call `RemoveAllResilienceHandlers()` first.
+
+### Working sessions
+
+To keep each AI session small and focused:
+
+1. Start a **new session per phase**. The repository is the memory: this plan (status + phase notes), `CLAUDE.md` and the git history.
+2. Kick-off prompt: *"Read CLAUDE.md and docs/implementation-plan.md. Implement phase N only. Stop for review before committing."*
+3. Close the phase by updating the Status column and adding its phase notes in the same commit.
 
 **Day 1:** phases 0–5. **Day 2:** phases 6–10 + demo rehearsal.
 

@@ -11,7 +11,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 
 - **Language:** all code, comments, commit messages and documentation are in English. `README_pt.md` is the only Portuguese file.
 - **Commits:** Conventional Commits (`feat(ordering): ...`, `test: ...`, `docs: ...`), small and focused.
-- **Workflow:** implement one phase at a time; stop at the end of each phase for human review before committing.
+- **Workflow:** implement one phase at a time (one session per phase); stop at the end of each phase for human review before committing. When a phase is approved, update its Status and Phase notes in `docs/implementation-plan.md` in the same commit.
 - **Catalog data is fictional.** Do not use real beer brands.
 - **Secrets are never committed.** Use .NET user-secrets (Aspire) or a git-ignored `.env` (docker-compose).
 
@@ -29,6 +29,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 - Consumers must be **idempotent** (inbox table keyed by `MessageId`).
 - **Ordering** follows Clean Architecture: `Domain` has no dependencies; `Application` depends only on `Domain`; `Infrastructure` and `Api` are outer layers. Enforced by `tests/Architecture.Tests`.
 - **Catalog** and **Inventory** use Vertical Slice Architecture (one folder per feature: endpoint + request + handler + validator).
+- Synchronous HTTP calls between services use explicit **Polly** resilience pipelines (retry with backoff + jitter, circuit breaker, timeout) via `AddResilienceHandler`.
 - Application code returns `Result`/`Result<T>` instead of throwing for expected failures; APIs map errors to RFC 9457 `ProblemDetails`.
 
 ## Commands
