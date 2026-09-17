@@ -112,6 +112,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Token-based authentication (zero trust) | Gateway issues, **every service validates** | The Gateway is a convenience, not the security boundary: being on the internal network is not a credential |
 | Token relay (on-behalf-of) | Ordering → Catalog (`AccessTokenPropagationHandler`) | The downstream call carries the point of sale's identity instead of a shared service account |
 | Rate Limiting | Gateway (`api`, `auth` fixed windows partitioned per caller) | One noisy client cannot spend everybody else's budget; `/auth/token` is the one endpoint worth guessing at |
+| Client-side polling | `src/Web` (`usePolledResource`) | Placing an order answers 202 and the outcome arrives later through the bus: the UI asks until the status is terminal instead of pretending the acknowledgement was a result |
 
 ### Domain-Driven Design (Ordering)
 
@@ -263,8 +264,8 @@ push, and update the **Status** column and the phase notes below.
 | 5 | Inventory & end-to-end flow | ✅ Done | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
 | 6 | Gateway & auth | ✅ Done | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
 | 7 | Notifications | ✅ Done | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
-| 8 | Web | ⏳ Next | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
-| 9 | Containers & CI | ⬜ | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
+| 8 | Web | ✅ Done | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
+| 9 | Containers & CI | ⏳ Next | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
 | 10 | Documentation | ⬜ | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
 
 ### Phase notes
@@ -346,6 +347,19 @@ Decisions and facts discovered during implementation that the next phases depend
   - Gateway: cluster `notifications` (destination `http://notifications` — the Functions host serves plain HTTP locally) and route `notifications`, policy `default`, **GET only**, so a write method is refused by the Gateway with 405 and never reaches the Function.
   - `local.settings.json` is git-ignored and not needed: Aspire supplies `FUNCTIONS_WORKER_RUNTIME`, the storage connection and every setting. Running `func start` by hand does need one.
   - Tests: `Notifications.UnitTests` (new, 15) and `Gateway.Tests` (+1; `/api/notifications` used to be the "unknown route" example and is now a real route). Verified live in Aspire end to end: order within stock → notification `OrderConfirmed` and an e-mail in Mailpit ~3 s after placing it; order over stock → `OrderRejected` with the reason and the SKU; `market` sees an empty panel while `bar` sees its own; messages that had been waiting on the `notifications` subscription since earlier phases were drained on first start (nothing was lost while there was no consumer). All five Postman collections pass with newman (176 assertions).
+- **Phase 8**
+  - `src/Web` is a React 19 + Vite 8 + TypeScript app (plain CSS, no UI library), scaffolded from the official `react-ts` template: **oxlint** is the linter it ships with, so phase 9 CI runs `npm ci`, `npm run lint`, `npm run build`. Aspire resource **`web`** (`AddViteApp("web", "../Web").WithNpm()`), which installs the packages before starting the dev server.
+  - The dev server port is **fixed to 5173** (`strictPort`, endpoint not proxied) because the Gateway allows a fixed list of CORS origins (`Cors:AllowedOrigins`, 5173 dev and 4173 preview); a random port would be refused by the browser, not by the code.
+  - A browser cannot use service discovery, so the AppHost injects **`VITE_GATEWAY_URL`** from the gateway endpoint. Vite only exposes variables prefixed with `VITE_`, and `client.ts` falls back to `http://localhost:5100` so `npm run dev` alone still reaches a Gateway started by hand.
+  - **The Gateway is the only address the app knows** (`/auth/token`, `/api/products`, `/api/stock`, `/api/orders`, `/api/notifications`, all in `api/endpoints.ts`). `api/types.ts` mirrors the service contracts; enums are string unions because every service serializes them as strings.
+  - Session: the token is kept in `sessionStorage` with its expiry (`auth/session.ts`). `AuthContext` exposes a `call` function instead of the raw token, so adding the bearer header and reacting to a rejected one happen in one place: a 401 from any service (or a token this app already knows is expired) signs out. Documented trade-off: an http-only, same-site cookie would keep a script from reading the token at all, which needs the token to be issued for a browser client.
+  - **No pricing rule lives in the client.** The cart shows an estimate from the catalog prices and says so; subtotal, volume discount and total come from the order the Ordering service returns, in the currency it carries.
+  - The cart is client state per signed-in user in `sessionStorage`. Its reducer state carries the storage key it was restored from, so the empty initial state can never overwrite a stored cart (React mounts effects twice in development, which is exactly how that bug showed up).
+  - **Live status is polling** (`usePolledResource`): 2 s while an order is `Pending` and it stops at a terminal state (`isFinal`), 10 s for catalog + stock, 5 s for notifications, and nothing at all while the tab is hidden. Placing an order answers 202 and the outcome is decided by other services over the bus, so the client has to ask; SSE or SignalR is the natural next step and is written down in the hook.
+  - Errors: `client.ts` turns every RFC 9457 body into an `ApiError` (status, `code`, `errors`, `traceId`); checkout lists the field errors of a 400 and shows the single description of anything else (e.g. 503 when Catalog is unreachable). A failed `fetch` (Gateway down, CORS) becomes status 0 with a readable message.
+  - Routes: `/login` (public), `/catalog`, `/cart`, `/orders`, `/orders/{id}`, `/notifications` behind `RequireAuth`, which is convenience only — the services reject an unauthenticated call regardless of what the app renders.
+  - Formatting uses `Intl` with a fixed `en-US` locale, matching `InvariantGlobalization` on the backend, so the same order reads the same way on any machine.
+  - Verified live in Aspire end to end: sign in as `bar` → catalog shows Catalog prices merged with Inventory availability → order within stock goes `Pending → Confirmed` on its own in ~4 s → the notification and its e-mail appear in the panel; 50 packs of `MIDNIGHT-STOUT-500` (5 available) comes back `Rejected` with the reason and the SKU, and with the 10 % volume discount the server applied (which is why the cart only estimates); `market` sees an empty order list; a wrong password shows the Gateway's 401 message; signing out clears the session and `/orders` redirects to `/login`.
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
