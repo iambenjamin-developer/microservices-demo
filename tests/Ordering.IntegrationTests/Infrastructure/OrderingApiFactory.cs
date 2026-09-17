@@ -37,6 +37,7 @@ public sealed class OrderingApiFactory : WebApplicationFactory<Program>, IAsyncL
         // Never used to connect: the event bus is faked and the consumers are disabled below.
         builder.UseSetting("ConnectionStrings:messaging", "Endpoint=sb://localhost.invalid;SharedAccessKeyName=test;SharedAccessKey=test");
         builder.UseSetting("Messaging:Consumers:Enabled", "false");
+        builder.UseSetting("Jwt:SigningKey", TestTokens.SigningKey);
         builder.UseSetting("Messaging:Outbox:PollingInterval", "00:00:00.100");
 
         builder.ConfigureTestServices(services =>

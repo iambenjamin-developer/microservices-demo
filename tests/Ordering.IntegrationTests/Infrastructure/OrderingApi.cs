@@ -1,6 +1,6 @@
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Ordering.Api.Customers;
 
 namespace Ordering.IntegrationTests.Infrastructure;
 
@@ -14,13 +14,19 @@ public static class OrderingApi
 
     public static string NewCustomerId() => $"test-{Guid.NewGuid():N}";
 
-    public static HttpClient CreateClient(OrderingApiFactory factory, string customerId)
+    /// <summary>A client signed in as <paramref name="customerId"/>; the identity travels in the token, not in a header.</summary>
+    public static HttpClient CreateClient(OrderingApiFactory factory, string customerId) =>
+        CreateClientWithToken(factory, TestTokens.ForCustomer(customerId));
+
+    public static HttpClient CreateClientWithToken(OrderingApiFactory factory, string accessToken)
     {
         var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add(CurrentCustomer.IdHeader, customerId);
-        client.DefaultRequestHeaders.Add(CurrentCustomer.EmailHeader, $"{customerId}@example.com");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         return client;
     }
+
+    /// <summary>A client with no token at all: every endpoint must answer 401.</summary>
+    public static HttpClient CreateAnonymousClient(OrderingApiFactory factory) => factory.CreateClient();
 
     public static async Task<JsonElement> ReadProblemAsync(HttpResponseMessage response)
     {

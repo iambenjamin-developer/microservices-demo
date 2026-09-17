@@ -39,6 +39,13 @@
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
   </ItemGroup>
 
+  <!-- Gateway and authentication -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
+    <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery.Yarp" Version="10.10.0" />
+  </ItemGroup>
+
   <!-- Application layer: object mapping and abstractions -->
   <ItemGroup>
     <PackageVersion Include="Mapster" Version="10.0.12" />

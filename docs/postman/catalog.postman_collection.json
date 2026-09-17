@@ -1,14 +1,17 @@
 {
   "info": {
     "name": "Catalog API",
-    "description": "Catalog service endpoints (phase 2). Requests are ordered so the whole collection can be run top to bottom with the Collection Runner or newman: queries first, then commands that create and update their own test product (seed data is never modified).\n\nBase URL: `{{catalogBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5101`). Every error response is RFC 9457 `application/problem+json`.",
+    "description": "Catalog service endpoints (phase 2). Requests are ordered so the whole collection can be run top to bottom with the Collection Runner or newman: queries first, then commands that create and update their own test product (seed data is never modified).\n\nBase URL: `{{catalogBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5101`). Every error response is RFC 9457 `application/problem+json`.\n\n**Sign in first.** Every service validates the JWT the Gateway issues, so the collection starts by calling `{{gatewayBaseUrl}}/auth/token` and sends the token as a bearer token on every request. Demo accounts (password `demo`): `bar` and `market` (role `PointOfSale`), `admin` (role `Admin`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
+    { "key": "gatewayBaseUrl", "value": "http://localhost:5100" },
     { "key": "catalogBaseUrl", "value": "http://localhost:5101" },
     { "key": "productId", "value": "" },
     { "key": "createdProductId", "value": "" },
-    { "key": "createdSku", "value": "" }
+    { "key": "createdSku", "value": "" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" }
   ],
   "event": [
     {
@@ -30,6 +33,74 @@
     }
   ],
   "item": [
+    {
+      "name": "Sign in",
+      "description": "Tokens come from the Gateway; Catalog only validates them.",
+      "item": [
+        {
+          "name": "Get point of sale token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Role is PointOfSale', () => pm.expect(token.role).to.eql('PointOfSale'));",
+                  "pm.collectionVariables.set('accessToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"bar\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Reading the catalog only needs an authenticated caller."
+          }
+        },
+        {
+          "name": "Get admin token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Role is Admin', () => pm.expect(token.role).to.eql('Admin'));",
+                  "pm.collectionVariables.set('adminToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Creating and updating products needs the Admin role."
+          }
+        }
+      ]
+    },
     {
       "name": "Products - queries",
       "item": [
@@ -191,7 +262,7 @@
     },
     {
       "name": "Products - commands",
-      "description": "POST/PUT are anonymous until phase 6 (Admin role). There is no DELETE endpoint, so each run leaves one `POSTMAN-TEST-*` product in the local database.",
+      "description": "POST/PUT require the `Admin` role, so these requests use `adminToken`. There is no DELETE endpoint, so each run leaves one `POSTMAN-TEST-*` product in the local database.",
       "item": [
         {
           "name": "Create product",
@@ -227,7 +298,9 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sku\": \"{{createdSku}}\",\n  \"name\": \"Postman Pale Ale 355ml\",\n  \"style\": \"ipa\",\n  \"volumeMl\": 355,\n  \"packSize\": 12,\n  \"price\": 20.50\n}"
@@ -237,7 +310,13 @@
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products"]
             },
-            "description": "`style` accepts any `BeerStyle` name, case-insensitive: Lager, Pilsner, Wheat, AmberAle, Ipa, Stout. `price` is per pack."
+            "description": "`style` accepts any `BeerStyle` name, case-insensitive: Lager, Pilsner, Wheat, AmberAle, Ipa, Stout. `price` is per pack.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -256,7 +335,9 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sku\": \"{{createdSku}}\",\n  \"name\": \"Duplicate\",\n  \"style\": \"Lager\",\n  \"volumeMl\": 355,\n  \"packSize\": 12,\n  \"price\": 10\n}"
@@ -266,7 +347,13 @@
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products"]
             },
-            "description": "Reuses the SKU created by *Create product*."
+            "description": "Reuses the SKU created by *Create product*.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -287,7 +374,9 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sku\": \"bad sku!\",\n  \"name\": \"\",\n  \"style\": \"Porter\",\n  \"volumeMl\": 10,\n  \"packSize\": 0,\n  \"price\": 1.234\n}"
@@ -296,6 +385,12 @@
               "raw": "{{catalogBaseUrl}}/api/products",
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products"]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
             }
           }
         },
@@ -306,23 +401,26 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 400, not 500', () => pm.response.to.have.status(400));"
-                ]
+                "exec": ["pm.test('Status is 400, not 500', () => pm.response.to.have.status(400));"]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{ \"sku\": "
-            },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{ \"sku\": " },
             "url": {
               "raw": "{{catalogBaseUrl}}/api/products",
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products"]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
             }
           }
         },
@@ -347,7 +445,9 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Postman Pale Ale 355ml\",\n  \"style\": \"Ipa\",\n  \"volumeMl\": 355,\n  \"packSize\": 24,\n  \"price\": 22.90\n}"
@@ -357,7 +457,13 @@
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products", "{{createdProductId}}"]
             },
-            "description": "Updates the product created by *Create product*. The SKU is immutable and not part of the body."
+            "description": "Updates the product created by *Create product*. The SKU is immutable and not part of the body.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -376,7 +482,9 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Ghost Lager\",\n  \"style\": \"Lager\",\n  \"volumeMl\": 350,\n  \"packSize\": 12,\n  \"price\": 10\n}"
@@ -385,7 +493,41 @@
               "raw": "{{catalogBaseUrl}}/api/products/00000000-0000-0000-0000-000000000001",
               "host": ["{{catalogBaseUrl}}"],
               "path": ["api", "products", "00000000-0000-0000-0000-000000000001"]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
             }
+          }
+        },
+        {
+          "name": "Create product as point of sale (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"POSTMAN-FORBIDDEN\",\n  \"name\": \"Never Created Lager 350ml\",\n  \"style\": \"Lager\",\n  \"volumeMl\": 350,\n  \"packSize\": 12,\n  \"price\": 10\n}"
+            },
+            "url": {
+              "raw": "{{catalogBaseUrl}}/api/products",
+              "host": ["{{catalogBaseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Uses the collection token (`PointOfSale`): authenticated, but not allowed to change the catalog."
           }
         }
       ]
@@ -415,7 +557,8 @@
               "host": ["{{catalogBaseUrl}}"],
               "path": ["health"]
             },
-            "description": "Readiness (all checks, including the database). Development only."
+            "description": "Readiness (all checks, including the database). Development only.",
+            "auth": { "type": "noauth" }
           }
         },
         {
@@ -440,10 +583,43 @@
               "host": ["{{catalogBaseUrl}}"],
               "path": ["openapi", "v1.json"]
             },
-            "description": "Interactive reference UI (Scalar): `{{catalogBaseUrl}}/scalar/v1`. Development only."
+            "description": "Interactive reference UI (Scalar): `{{catalogBaseUrl}}/scalar/v1`. Development only.",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "List products - no token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Asks for a bearer token', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('Bearer'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{catalogBaseUrl}}/api/products",
+              "host": ["{{catalogBaseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Catalog validates the token itself, so calling it directly without one fails the same way as through the Gateway."
           }
         }
       ]
     }
-  ]
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  }
 }

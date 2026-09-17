@@ -1,27 +1,17 @@
 {
   "info": {
     "name": "Ordering API",
-    "description": "Ordering service endpoints (phase 4). Requests are ordered so the whole collection can be run top to bottom with the Collection Runner or newman: commands first (they create a fresh order), then queries that read it.\n\nBase URL: `{{orderingBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5102`). Catalog must be running: prices are snapshotted from it. Every error response is RFC 9457 `application/problem+json`.\n\n**Customer identity (until phase 6):** the optional `X-Customer-Id` / `X-Customer-Email` headers select the point of sale; without them the configured demo customer (`bar`) is used. The collection generates a new customer id per run, so the order list only contains this run's orders.\n\n**Catalog down (503):** stop the `catalog` resource in the Aspire dashboard and send *Place order*: after the retries of the resilience pipeline the API answers `503` with code `Catalog.Unavailable`; repeated calls fail fast while the circuit is open.",
+    "description": "Ordering service endpoints (phase 4). Requests are ordered so the whole collection can be run top to bottom with the Collection Runner or newman: commands first (they create a fresh order), then queries that read it.\n\nBase URL: `{{orderingBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5102`). Catalog must be running: prices are snapshotted from it. Every error response is RFC 9457 `application/problem+json`.\n\n**Customer identity:** it comes from the `sub` and `email` claims of the access token, never from the request. The collection signs in as `bar`; *Get order by id - another customer* signs in as `market` to show that one point of sale cannot read another one's order.\n\n**Catalog down (503):** stop the `catalog` resource in the Aspire dashboard and send *Place order*: after the retries of the resilience pipeline the API answers `503` with code `Catalog.Unavailable`; repeated calls fail fast while the circuit is open.\n\n**Sign in first.** Every service validates the JWT the Gateway issues, so the collection starts by calling `{{gatewayBaseUrl}}/auth/token` and sends the token as a bearer token on every request. Demo accounts (password `demo`): `bar` and `market` (role `PointOfSale`), `admin` (role `Admin`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
+    { "key": "gatewayBaseUrl", "value": "http://localhost:5100" },
     { "key": "orderingBaseUrl", "value": "http://localhost:5102" },
-    { "key": "customerId", "value": "" },
-    { "key": "orderId", "value": "" }
+    { "key": "orderId", "value": "" },
+    { "key": "accessToken", "value": "" },
+    { "key": "otherToken", "value": "" }
   ],
   "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Fallback when a request is sent on its own before 'Place order' ever ran.",
-          "if (!pm.collectionVariables.get('customerId')) {",
-          "    pm.collectionVariables.set('customerId', `postman-${Date.now()}`);",
-          "}"
-        ]
-      }
-    },
     {
       "listen": "test",
       "script": {
@@ -42,21 +32,78 @@
   ],
   "item": [
     {
+      "name": "Sign in",
+      "description": "Tokens come from the Gateway; Ordering only validates them.",
+      "item": [
+        {
+          "name": "Get point of sale token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Identifies the bar', () => pm.expect(token.username).to.eql('bar'));",
+                  "pm.collectionVariables.set('accessToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"bar\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "The point of sale that places the orders of this run."
+          }
+        },
+        {
+          "name": "Get another point of sale token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.collectionVariables.set('otherToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"market\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "A second point of sale, used to prove one customer cannot read another one's order."
+          }
+        }
+      ]
+    },
+    {
       "name": "Orders - commands",
       "item": [
         {
           "name": "Place order",
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// New customer per run (collection variables persist in the Postman app), so list assertions only see this run's order.",
-                  "pm.collectionVariables.set('customerId', `postman-${Date.now()}`);"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -69,7 +116,7 @@
                   "});",
                   "pm.test('Order is Pending for the calling customer', () => {",
                   "    pm.expect(order.status).to.eql('Pending');",
-                  "    pm.expect(order.customerId).to.eql(pm.collectionVariables.get('customerId'));",
+                  "    pm.expect(order.customerId).to.eql('bar');",
                   "    pm.expect(order.completedOnUtc).to.be.null;",
                   "});",
                   "pm.test('Prices come from Catalog and SKUs are normalized', () => {",
@@ -90,9 +137,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -127,9 +172,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -164,9 +207,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -197,9 +238,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -229,14 +268,9 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": []\n}"
-            },
+            "body": { "mode": "raw", "raw": "{\n  \"items\": []\n}" },
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders",
               "host": ["{{orderingBaseUrl}}"],
@@ -251,22 +285,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 400 (binding error, not 500)', () => pm.response.to.have.status(400));"
-                ]
+                "exec": ["pm.test('Status is 400 (binding error, not 500)', () => pm.response.to.have.status(400));"]
               }
             }
           ],
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{ \"items\": [ { \"sku\": "
-            },
+            "body": { "mode": "raw", "raw": "{ \"items\": [ { \"sku\": " },
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders",
               "host": ["{{orderingBaseUrl}}"],
@@ -303,9 +331,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "X-Customer-Id", "value": "{{customerId}}" }
-            ],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
               "host": ["{{orderingBaseUrl}}"],
@@ -330,15 +356,19 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "X-Customer-Id", "value": "someone-else" }
-            ],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
               "host": ["{{orderingBaseUrl}}"],
               "path": ["api", "orders", "{{orderId}}"]
             },
-            "description": "The order exists but belongs to another customer: the API answers 404, not 403."
+            "description": "The same order id, read with the token of another point of sale: the API answers 404, not 403, so it does not reveal that the order exists.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{otherToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -357,9 +387,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "X-Customer-Id", "value": "{{customerId}}" }
-            ],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders/00000000-0000-0000-0000-000000000001",
               "host": ["{{orderingBaseUrl}}"],
@@ -377,13 +405,16 @@
                 "exec": [
                   "pm.test('Status is 200', () => pm.response.to.have.status(200));",
                   "const orders = pm.response.json();",
-                  "pm.test('Only the calling customer\\'s orders, the placed one included', () => {",
-                  "    pm.expect(orders).to.have.lengthOf(1);",
+                  "pm.test('Most recent first: this run\\'s order leads the list', () => {",
+                  "    pm.expect(orders).to.be.an('array').that.is.not.empty;",
                   "    pm.expect(orders[0].id).to.eql(pm.collectionVariables.get('orderId'));",
                   "});",
                   "pm.test('Summary rows carry item count and total, not items', () => {",
                   "    pm.expect(orders[0]).to.include({ itemCount: 2, total: 507.3, currency: 'USD' });",
                   "    pm.expect(orders[0]).to.not.have.property('items');",
+                  "});",
+                  "pm.test('Every row belongs to the signed in customer', () => {",
+                  "    pm.expect(orders.every(o => o.customerId === undefined || o.customerId === 'bar')).to.be.true;",
                   "});"
                 ]
               }
@@ -391,18 +422,45 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "X-Customer-Id", "value": "{{customerId}}" }
-            ],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders",
               "host": ["{{orderingBaseUrl}}"],
               "path": ["api", "orders"]
             },
-            "description": "The customer's orders, most recent first (max 100)."
+            "description": "The signed in customer's orders, most recent first (max 100). Orders of previous runs stay in the list: the account is fixed now that identity comes from the token."
+          }
+        },
+        {
+          "name": "List orders - no token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Without a token there is no customer to list orders for."
           }
         }
       ]
     }
-  ]
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  }
 }

@@ -72,7 +72,7 @@ Azure Service Bus (emulator)
 
 | Service | Style | Responsibilities | Endpoints |
 |---|---|---|---|
-| **Gateway** | Minimal host | YARP reverse proxy, JWT validation, demo token issuing, CORS, rate limiting | `POST /auth/token`, proxies `/api/*` |
+| **Gateway** | Minimal host | YARP reverse proxy, JWT validation, demo token issuing (`bar`, `market`, `admin`), CORS, rate limiting | `POST /auth/token`, proxies `/api/*` |
 | **Catalog** | Vertical Slice | Beer products (SKU, name, style, volume, pack size, price) | `GET /api/products`, `GET /api/products/{id}`, `POST/PUT /api/products` (Admin) |
 | **Ordering** | Clean Architecture + DDD | Order lifecycle, discount policies, event publishing/consuming | `POST /api/orders`, `GET /api/orders`, `GET /api/orders/{id}` |
 | **Inventory** | Vertical Slice | Stock per SKU, all-or-nothing reservation | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
@@ -109,6 +109,9 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Dead-Letter Queue | Service Bus subscriptions (max delivery count) | Poison messages do not block processing |
 | Retry + Circuit Breaker + Timeout (Polly) | Ordering → Catalog `HttpClient`: explicit Polly v8 pipeline (`AddResilienceHandler("catalog", ...)` with `AddRetry` — exponential backoff + jitter, `AddCircuitBreaker`, `AddTimeout`) | Transient fault tolerance; fail fast when Catalog is down instead of piling up requests |
 | Health Check | All services (`/health`, `/alive` via ServiceDefaults) | Operability |
+| Token-based authentication (zero trust) | Gateway issues, **every service validates** | The Gateway is a convenience, not the security boundary: being on the internal network is not a credential |
+| Token relay (on-behalf-of) | Ordering → Catalog (`AccessTokenPropagationHandler`) | The downstream call carries the point of sale's identity instead of a shared service account |
+| Rate Limiting | Gateway (`api`, `auth` fixed windows partitioned per caller) | One noisy client cannot spend everybody else's budget; `/auth/token` is the one endpoint worth guessing at |
 
 ### Domain-Driven Design (Ordering)
 
@@ -148,9 +151,10 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Persistence | PostgreSQL, EF Core 10 (Npgsql), migrations |
 | Messaging | Azure Service Bus emulator, `Azure.Messaging.ServiceBus` SDK |
 | Serverless | Azure Functions v4, isolated worker |
-| Gateway | YARP |
+| Gateway | YARP (routes, clusters and per-route policies from configuration; destinations are Aspire service discovery names) |
 | Email | MailKit (SMTP); Mailpit container locally, Gmail SMTP optional |
-| Auth | JWT Bearer (symmetric key, demo users) |
+| Auth | JWT Bearer (HS256 symmetric key, demo accounts). The Gateway issues, every service validates; endpoints are authenticated by default |
+| API protection | ASP.NET Core rate limiting (fixed window per caller) and CORS restricted to the configured web origins |
 | Resilience | **Polly v8** through `Microsoft.Extensions.Http.Resilience`. ServiceDefaults keeps the standard handler for generic clients; the Catalog client replaces it (`RemoveAllResilienceHandlers()`) with an explicit Polly pipeline so handlers are never stacked. |
 | Observability | OpenTelemetry (traces, metrics, logs) → Aspire dashboard |
 | Tests | xUnit, NSubstitute, Shouldly, Testcontainers (PostgreSQL), `WebApplicationFactory`, NetArchTest |
@@ -183,6 +187,7 @@ microservices-demo/
 │  ├─ Ordering.Application.UnitTests/
 │  ├─ Inventory.UnitTests/
 │  ├─ Ordering.IntegrationTests/
+│  ├─ Gateway.Tests/
 │  └─ Architecture.Tests/
 ├─ docs/
 │  ├─ implementation-plan.md
@@ -213,7 +218,7 @@ Email settings:
 | `Email__Port` | `1025` (Mailpit) | `587` (STARTTLS) for Gmail |
 | `Email__Username` / `Email__Password` | empty | Gmail address + **App Password** (requires 2FA) |
 | `Email__From` | `no-reply@microservices-demo.local` | Sender address |
-| `DemoUsers__PointOfSale__Email` | `bar@example.com` | Recipient of order emails; set to a real inbox to receive them |
+| `DemoUsers__bar__Email` | `bar@example.com` | The e-mail claim of the `bar` account, and therefore the recipient of its order e-mails; set to a real inbox to receive them |
 
 By default emails are captured by **Mailpit** (web UI on `http://localhost:8025`), so the project runs
 for anyone who clones it without credentials.
@@ -225,7 +230,8 @@ for anyone who clones it without credentials.
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
 | Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, strict Mapster config compile |
 | Unit | `Inventory.UnitTests` | All-or-nothing reservation rules |
-| Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; `IEventBus` faked |
+| Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
+| Functional | `Gateway.Tests` | The real Gateway in memory (`WebApplicationFactory`, no backend): token issuing and its failure modes, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused |
 | Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; endpoints do not use Infrastructure |
 
 Principle: fast tests on business rules, real infrastructure where mocks would lie (database), coverage as a signal, not a goal.
@@ -252,8 +258,8 @@ push, and update the **Status** column and the phase notes below.
 | 3 | Ordering domain | ✅ Done | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
 | 4 | Ordering application & API | ✅ Done | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, Mapster read mappings (aggregate → DTO only), integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
 | 5 | Inventory & end-to-end flow | ✅ Done | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
-| 6 | Gateway & auth | ⏳ Next | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
-| 7 | Notifications | ⬜ | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
+| 6 | Gateway & auth | ✅ Done | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
+| 7 | Notifications | ⏳ Next | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
 | 8 | Web | ⬜ | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
 | 9 | Containers & CI | ⬜ | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
 | 10 | Documentation | ⬜ | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
@@ -309,10 +315,24 @@ Decisions and facts discovered during implementation that the next phases depend
   - Mapster: `InventoryMapping.CreateMappingConfig()` (strict) + `StockMappingRegister`; unit tests call `Compile()` and `CompileProjection()`.
   - Reserved packs are never released (there is no order cancellation and no shipping step), which is why a separate reservation table is not needed yet. Releasing on `OrderRejected` and committing on shipment is the natural next step.
   - Tests: `Inventory.UnitTests` (18). Full flow checked against Aspire: order within stock → `Confirmed` in ~3.5 s with 100 → 98 available / 0 → 2 reserved; order with 1000 packs of the short SKU → `Rejected` with reason `Not enough stock for some products. (MIDNIGHT-STOUT-500)` and **nothing** reserved for its available line; the same `OrderPlaced` sent twice with one `MessageId` produced one reservation, one inbox row and one `StockReserved`.
+- **Phase 6**
+  - One project, `src/Gateway` (`Gateway.csproj`), Aspire resource **`gateway`** (`http://localhost:5100`, `WithExternalHttpEndpoints`). It references `catalog`, `ordering` and `inventory` for service discovery and owns nothing else: no database, no messaging.
+  - `BuildingBlocks.Web` gained the authentication half everyone shares: `JwtOptions` (section `Jwt`: `SigningKey`, `Issuer` `microservices-demo`, `Audience` `microservices-demo-api`, `Lifetime`, `ClockSkew`; data-annotation validated with `ValidateOnStart`), `AddJwtAuthentication()`, `JwtClaimNames` (`sub`, `email`, `role`, `name`), `Roles` (`PointOfSale`, `Admin`), `AuthorizationPolicies.Admin`, `RequireAdmin()` and `AddBearerSecurityScheme()` for the OpenAPI document. `ErrorType.Unauthorized` → **401** was added to `BuildingBlocks.Common`.
+  - **Secure by default:** `AddJwtAuthentication()` sets a *fallback* authorization policy (`RequireAuthenticatedUser`), so a new endpoint is protected unless it says `AllowAnonymous`. The exceptions are health probes (`MapDefaultEndpoints`, an orchestrator has no token) and `MapOpenApi`/`MapScalarApiReference`. `MapInboundClaims = false`: claims keep the names the token uses.
+  - **Every service validates the token itself** (`Catalog`, `Ordering`, `Inventory` all call `AddJwtAuthentication()` + `UseAuthentication/UseAuthorization`). Being inside the cluster is not a credential; the Gateway is a convenience, not the security boundary.
+  - `POST /auth/token` (Gateway only) exchanges demo credentials for an HS256 JWT signed by `DemoTokenIssuer` — the single place in the solution that *creates* a token. Wrong password and unknown user return the same `Auth.InvalidCredentials` 401 (no account enumeration) and the password comparison is constant time. Accounts live in section `DemoUsers` (`bar`, `market` → `PointOfSale`; `admin` → `Admin`; password `demo`): **demo credentials on purpose, not secrets**, so the repository runs for anyone who clones it. A production system swaps this endpoint for an identity provider and keeps only the validation half.
+  - The **signing key is a real secret**: AppHost parameter `jwt-signing-key` (`GenerateParameterDefault`, `secret: true`, `persist: true`) generated on first run into the AppHost user-secrets and injected into all four projects as `Jwt__SigningKey`. docker-compose (phase 9) reads it from `.env`.
+  - YARP routes and clusters are configuration (`ReverseProxy` section), destinations are service discovery names (`https+http://catalog`) resolved by `AddServiceDiscoveryDestinationResolver()`. Routes are split by method so the policy is part of the route: `catalog-read`/`inventory-read`/`ordering` use `default` (authenticated), `catalog-admin` (`POST`,`PUT /api/products`) and `inventory-admin` (`PUT /api/stock`) use `Admin`. `/api/notifications` is added in phase 7.
+  - Middleware order in the Gateway: exception handling → **CORS** → authentication → authorization → rate limiter → endpoints → `MapReverseProxy`. CORS runs first so a browser preflight is answered before authorization can reject it for having no token. Allowed origins come from section `Cors` (never `*`); `Location` is exposed for the 202 of *place order*.
+  - Rate limiting: fixed window partitioned by `sub` (or remote IP when anonymous). Policy `api` (100 / 10 s) on the proxied routes, `auth` (10 / min) on `/auth/token`. Rejections are 429 and `UseStatusCodePages` turns them into ProblemDetails like everything else.
+  - **Ordering identity now comes from the token:** `CurrentCustomer` binds `sub`/`email` (the `X-Customer-*` headers and `DemoCustomerOptions` are gone) and throws `BadHttpRequestException(401)` for a token that validates but identifies nobody.
+  - **Service-to-service calls relay the caller's token** (`IAccessTokenProvider` port in `Ordering.Application`, `HttpContextAccessTokenProvider` in `Ordering.Api`, `AccessTokenPropagationHandler` in `Ordering.Infrastructure`, outside the Polly pipeline). The port keeps ASP.NET Core out of the inner layers. Client credentials for machine-to-machine calls is the natural next step; here Ordering genuinely acts *on behalf of* the point of sale. A 401/403 from Catalog is logged apart from a transient fault so a bad key is not mistaken for an outage.
+  - Tests: `Gateway.Tests` (new, 12 — token issuing, bad credentials, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused) and `Ordering.IntegrationTests` (+4 authentication tests, `TestTokens` signs them without involving the Gateway). Verified live in Aspire end to end through the Gateway: sign in → place order → `Confirmed` with stock moved, `market` gets 404 for `bar`'s order, `PointOfSale` gets 403 on `PUT /api/stock`, `/auth/token` answers 429 after 10 calls. All four Postman collections pass with newman (145 assertions).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
   - Setting names are shared by both paths: `Jwt:*`, `DemoUsers:*`, `Email:*` (env var form `Jwt__SigningKey`, etc.).
+  - `Jwt:SigningKey` is the only value every project must agree on. Locally the AppHost generates and persists it (`jwt-signing-key`); for docker-compose it comes from `.env`. Demo account passwords are **not** secrets and stay in the Gateway's `appsettings.json`.
 
 ### Working sessions
 

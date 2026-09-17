@@ -1,32 +1,22 @@
 {
   "info": {
     "name": "Inventory API",
-    "description": "Inventory service endpoints (phase 5) plus the end-to-end order flow they complete.\n\nBase URL: `{{inventoryBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5103`). Every error response is RFC 9457 `application/problem+json`.\n\nStock is counted in **packs**, the same unit Catalog prices and Ordering buys. Reserving moves packs from `quantityAvailable` to `quantityReserved`; `quantityOnHand` is the sum of both.\n\nThe **Order flow (end to end)** folder needs Ordering and Catalog running as well (`{{orderingBaseUrl}}`): it places an order, waits for the saga (Ordering → Service Bus → Inventory → Service Bus → Ordering) and checks both the order status and the stock that moved. It is repeatable: it tops the SKU up before reserving, and the rejected path asks for more packs than the warehouse could ever hold.",
+    "description": "Inventory service endpoints (phase 5) plus the end-to-end order flow they complete.\n\nBase URL: `{{inventoryBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5103`). Every error response is RFC 9457 `application/problem+json`.\n\nStock is counted in **packs**, the same unit Catalog prices and Ordering buys. Reserving moves packs from `quantityAvailable` to `quantityReserved`; `quantityOnHand` is the sum of both.\n\nThe **Order flow (end to end)** folder needs Ordering and Catalog running as well (`{{orderingBaseUrl}}`): it places an order, waits for the saga (Ordering → Service Bus → Inventory → Service Bus → Ordering) and checks both the order status and the stock that moved. It is repeatable: it tops the SKU up before reserving, and the rejected path asks for more packs than the warehouse could ever hold.\n\n**Sign in first.** Every service validates the JWT the Gateway issues, so the collection starts by calling `{{gatewayBaseUrl}}/auth/token` and sends the token as a bearer token on every request. Demo accounts (password `demo`): `bar` and `market` (role `PointOfSale`), `admin` (role `Admin`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
+    { "key": "gatewayBaseUrl", "value": "http://localhost:5100" },
     { "key": "inventoryBaseUrl", "value": "http://localhost:5103" },
     { "key": "orderingBaseUrl", "value": "http://localhost:5102" },
     { "key": "flowSku", "value": "GOLDEN-LAGER-350" },
     { "key": "shortSku", "value": "MIDNIGHT-STOUT-500" },
-    { "key": "customerId", "value": "" },
     { "key": "orderId", "value": "" },
     { "key": "reservedBefore", "value": "0" },
-    { "key": "pollAttempts", "value": "0" }
+    { "key": "pollAttempts", "value": "0" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" }
   ],
   "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Fallback when a request is sent on its own before the end-to-end folder ever ran.",
-          "if (!pm.collectionVariables.get('customerId')) {",
-          "    pm.collectionVariables.set('customerId', `postman-${Date.now()}`);",
-          "}"
-        ]
-      }
-    },
     {
       "listen": "test",
       "script": {
@@ -46,6 +36,74 @@
     }
   ],
   "item": [
+    {
+      "name": "Sign in",
+      "description": "Tokens come from the Gateway; Inventory only validates them.",
+      "item": [
+        {
+          "name": "Get point of sale token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Role is PointOfSale', () => pm.expect(token.role).to.eql('PointOfSale'));",
+                  "pm.collectionVariables.set('accessToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"bar\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Places the orders of the end-to-end folder and reads stock."
+          }
+        },
+        {
+          "name": "Get admin token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Role is Admin', () => pm.expect(token.role).to.eql('Admin'));",
+                  "pm.collectionVariables.set('adminToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Setting stock levels needs the Admin role."
+          }
+        }
+      ]
+    },
     {
       "name": "Stock - queries",
       "item": [
@@ -149,17 +207,22 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"quantityAvailable\": 120\n}"
-            },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": 120\n}" },
             "url": {
               "raw": "{{inventoryBaseUrl}}/api/stock/hoppy-trail-ipa-473",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock", "hoppy-trail-ipa-473"]
             },
-            "description": "Replenishment (Admin once phase 6 adds JWT). The SKU in the URL is case-insensitive and only the available quantity is set; reserved packs are not part of the request."
+            "description": "Replenishment (Admin once phase 6 adds JWT). The SKU in the URL is case-insensitive and only the available quantity is set; reserved packs are not part of the request.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -180,17 +243,22 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"quantityAvailable\": 10\n}"
-            },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": 10\n}" },
             "url": {
               "raw": "{{inventoryBaseUrl}}/api/stock/NOT-STOCKED-001",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock", "NOT-STOCKED-001"]
             },
-            "description": "Stock is only kept for SKUs the service already knows, so a typo in the URL cannot invent a product."
+            "description": "Stock is only kept for SKUs the service already knows, so a typo in the URL cannot invent a product.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -211,17 +279,47 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"quantityAvailable\": -1\n}"
-            },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": -1\n}" },
             "url": {
               "raw": "{{inventoryBaseUrl}}/api/stock/{{flowSku}}",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock", "{{flowSku}}"]
             },
-            "description": "FluentValidation runs as an endpoint filter, so invalid input never reaches the handler."
+            "description": "FluentValidation runs as an endpoint filter, so invalid input never reaches the handler.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update stock as point of sale (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": 1\n}" },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock/{{flowSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock", "{{flowSku}}"]
+            },
+            "description": "Uses the collection token (`PointOfSale`): a bar cannot restock the warehouse. Nothing changes."
           }
         }
       ]
@@ -232,16 +330,6 @@
         {
           "name": "Top the SKU up",
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// New customer per run, so the order list of Ordering only shows this run's orders.",
-                  "pm.collectionVariables.set('customerId', `postman-${Date.now()}`);"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -258,17 +346,22 @@
           ],
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"quantityAvailable\": 100\n}"
-            },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": 100\n}" },
             "url": {
               "raw": "{{inventoryBaseUrl}}/api/stock/{{flowSku}}",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock", "{{flowSku}}"]
             },
-            "description": "Makes the flow repeatable: whatever previous runs reserved, the SKU starts with 100 available packs."
+            "description": "Makes the flow repeatable: whatever previous runs reserved, the SKU starts with 100 available packs.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            }
           }
         },
         {
@@ -291,9 +384,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -346,7 +437,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Customer-Id", "value": "{{customerId}}" }],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
               "host": ["{{orderingBaseUrl}}"],
@@ -382,7 +473,9 @@
               "raw": "{{inventoryBaseUrl}}/api/stock?sku={{flowSku}}",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock"],
-              "query": [{ "key": "sku", "value": "{{flowSku}}" }]
+              "query": [
+                { "key": "sku", "value": "{{flowSku}}" }
+              ]
             },
             "description": "Nothing left the warehouse yet: the packs are reserved, not shipped, so `quantityOnHand` does not change."
           }
@@ -408,9 +501,7 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Customer-Id", "value": "{{customerId}}" },
-              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+              { "key": "Content-Type", "value": "application/json" }
             ],
             "body": {
               "mode": "raw",
@@ -431,9 +522,7 @@
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "setTimeout(() => {}, 1000);"
-                ]
+                "exec": ["setTimeout(() => {}, 1000);"]
               }
             },
             {
@@ -463,7 +552,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Customer-Id", "value": "{{customerId}}" }],
+            "header": [],
             "url": {
               "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
               "host": ["{{orderingBaseUrl}}"],
@@ -498,12 +587,20 @@
               "raw": "{{inventoryBaseUrl}}/api/stock?sku={{flowSku}}",
               "host": ["{{inventoryBaseUrl}}"],
               "path": ["api", "stock"],
-              "query": [{ "key": "sku", "value": "{{flowSku}}" }]
+              "query": [
+                { "key": "sku", "value": "{{flowSku}}" }
+              ]
             },
             "description": "Same numbers as after the confirmed order: the rejected order reserved nothing at all."
           }
         }
       ]
     }
-  ]
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  }
 }

@@ -32,6 +32,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 - **Catalog** and **Inventory** use Vertical Slice Architecture (one folder per feature: endpoint + request + handler + validator).
 - Synchronous HTTP calls between services use explicit **Polly** resilience pipelines (retry with backoff + jitter, circuit breaker, timeout) via `AddResilienceHandler`.
 - Application code returns `Result`/`Result<T>` instead of throwing for expected failures; APIs map errors to RFC 9457 `ProblemDetails`.
+- **Auth:** only the Gateway issues JWTs (`POST /auth/token`); every service validates them itself through `AddJwtAuthentication()` from `BuildingBlocks.Web`. Endpoints are authenticated by default (fallback policy) — mark public ones `AllowAnonymous` and back-office ones `RequireAdmin()`. Caller identity comes from the `sub`/`email` claims, never from a header or a request body.
 - **Mapping:** Ordering and Inventory use **Mapster** (runtime mode, `IMapper` from DI, one `IRegister` per area, `ProjectToType<T>()` for EF queries). Mappings only go entity/aggregate → DTO; aggregates are always created through their factory methods. **Catalog maps by hand on purpose** — do not add Mapster to it.
 
 ## Commands

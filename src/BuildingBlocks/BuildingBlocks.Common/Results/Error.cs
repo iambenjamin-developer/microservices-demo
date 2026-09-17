@@ -10,6 +10,8 @@ public record Error(string Code, string Description, ErrorType Type)
 
     public static Error Validation(string code, string description) => new(code, description, ErrorType.Validation);
 
+    public static Error Unauthorized(string code, string description) => new(code, description, ErrorType.Unauthorized);
+
     public static Error NotFound(string code, string description) => new(code, description, ErrorType.NotFound);
 
     public static Error Conflict(string code, string description) => new(code, description, ErrorType.Conflict);
@@ -27,6 +29,9 @@ public enum ErrorType
 {
     Failure,
     Validation,
+
+    /// <summary>The caller could not be authenticated (missing or wrong credentials).</summary>
+    Unauthorized,
     NotFound,
     Conflict,
 

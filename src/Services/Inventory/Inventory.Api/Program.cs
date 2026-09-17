@@ -1,4 +1,6 @@
+using BuildingBlocks.Web.Authentication;
 using BuildingBlocks.Web.Endpoints;
+using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using FluentValidation;
 using Inventory.Api.Features;
@@ -17,8 +19,10 @@ builder.AddNpgsqlDbContext<InventoryDbContext>(
 
 builder.AddInventoryMessaging();
 
+builder.AddJwtAuthentication();
+
 builder.Services.AddApiProblemDetails();
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>(includeInternalTypes: true);
 builder.Services.AddInventoryMapping();
@@ -31,9 +35,12 @@ app.UseApiExceptionHandling();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapOpenApi().AllowAnonymous();
+    app.MapScalarApiReference().AllowAnonymous();
 }
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapDefaultEndpoints();
 app.MapEndpoints();

@@ -1,39 +1,32 @@
-using Microsoft.Extensions.Options;
+using System.Security.Claims;
+using BuildingBlocks.Web.Authentication;
 
 namespace Ordering.Api.Customers;
 
 /// <summary>
-/// The point of sale placing or reading orders, bound as an endpoint parameter (<see cref="BindAsync"/>).
+/// The point of sale placing or reading orders, bound as an endpoint parameter (<see cref="BindAsync"/>)
+/// from the claims of the access token the Gateway issued and this service validated.
 /// </summary>
 /// <remarks>
-/// TODO(phase 6): read the id and e-mail from the JWT claims validated by the Gateway and remove the headers.
-/// Until then the optional <c>X-Customer-Id</c> / <c>X-Customer-Email</c> headers select the customer (handy to
-/// test isolation between customers), falling back to the configured demo point of sale.
+/// Identity is never taken from the request body or a header: a customer can only act as itself, which is
+/// what makes "another customer's order answers 404" an authorization rule rather than a convention.
 /// </remarks>
 public sealed record CurrentCustomer(string Id, string Email)
 {
-    public const string IdHeader = "X-Customer-Id";
-    public const string EmailHeader = "X-Customer-Email";
-
     public static ValueTask<CurrentCustomer?> BindAsync(HttpContext context)
     {
-        var demoCustomer = context.RequestServices.GetRequiredService<IOptions<DemoCustomerOptions>>().Value;
+        var id = context.User.FindFirstValue(JwtClaimNames.Subject);
+        var email = context.User.FindFirstValue(JwtClaimNames.Email);
 
-        var id = context.Request.Headers[IdHeader].ToString();
-        var email = context.Request.Headers[EmailHeader].ToString();
+        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(email))
+        {
+            // The endpoints require an authenticated caller, so this only happens with a token that
+            // validates but does not identify a point of sale. Treat it as "not authenticated".
+            throw new BadHttpRequestException(
+                "The access token does not identify a point of sale.",
+                StatusCodes.Status401Unauthorized);
+        }
 
-        return ValueTask.FromResult<CurrentCustomer?>(new CurrentCustomer(
-            string.IsNullOrWhiteSpace(id) ? demoCustomer.Username : id.Trim(),
-            string.IsNullOrWhiteSpace(email) ? demoCustomer.Email : email.Trim()));
+        return ValueTask.FromResult<CurrentCustomer?>(new CurrentCustomer(id, email));
     }
-}
-
-/// <summary>Demo point of sale (section <c>DemoUsers:PointOfSale</c>, shared with the Gateway in phase 6).</summary>
-public sealed class DemoCustomerOptions
-{
-    public const string SectionName = "DemoUsers:PointOfSale";
-
-    public string Username { get; set; } = "bar";
-
-    public string Email { get; set; } = "bar@example.com";
 }

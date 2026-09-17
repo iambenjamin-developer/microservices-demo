@@ -28,6 +28,8 @@ internal static class CatalogClientRegistration
                 "Catalog: TotalTimeout must be greater than AttemptTimeout (> 0) and MaxRetryAttempts cannot be negative.")
             .ValidateOnStart();
 
+        services.AddTransient<AccessTokenPropagationHandler>();
+
         var httpClient = services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
             client.BaseAddress = serviceProvider.GetRequiredService<IOptions<CatalogClientOptions>>().Value.BaseAddress);
 
@@ -36,6 +38,9 @@ internal static class CatalogClientRegistration
 #pragma warning disable EXTEXP0001 // Experimental API, but the documented way to replace the default handler.
         httpClient.RemoveAllResilienceHandlers();
 #pragma warning restore EXTEXP0001
+
+        // Outside the resilience pipeline: the token is the same for every attempt.
+        httpClient.AddHttpMessageHandler<AccessTokenPropagationHandler>();
 
         httpClient.AddResilienceHandler(PipelineName, static (pipeline, context) =>
         {

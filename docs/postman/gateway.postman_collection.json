@@ -1,0 +1,434 @@
+{
+  "info": {
+    "name": "Gateway API",
+    "description": "Gateway endpoints (phase 6): demo sign-in and the reverse proxy in front of every service.\n\nBase URL: `{{gatewayBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5100`). Every error response is RFC 9457 `application/problem+json`.\n\n**Sign in first.** `POST /auth/token` exchanges demo credentials for a JWT; the requests below send it as a bearer token. Demo accounts (all with password `demo`): `bar` and `market` (role `PointOfSale`), `admin` (role `Admin`). They are demo credentials on purpose; the signing key is the real secret and is never committed.\n\n**What the Gateway decides on its own:** a request with no token is rejected with 401 and a request with the wrong role with 403, both before anything is proxied. `/auth/token` is rate limited (10 requests per minute per client), so running this collection twice in a minute will show 429 responses.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "gatewayBaseUrl", "value": "http://localhost:5100" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "createdSku", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Shared helper: every non-2xx response must be a ProblemDetails body with a trace id.",
+          "if (pm.response.code >= 400) {",
+          "    pm.test('Error is RFC 9457 ProblemDetails with traceId', () => {",
+          "        pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+          "        const problem = pm.response.json();",
+          "        pm.expect(problem.status).to.eql(pm.response.code);",
+          "        pm.expect(problem).to.have.property('traceId');",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Get point of sale token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Returns a bearer token for the point of sale', () => {",
+                  "    pm.expect(token.tokenType).to.eql('Bearer');",
+                  "    pm.expect(token.role).to.eql('PointOfSale');",
+                  "    pm.expect(token.username).to.eql('bar');",
+                  "    pm.expect(token.expiresIn).to.eql(3600);",
+                  "});",
+                  "pm.test('The token carries sub, email and role claims', () => {",
+                  "    const payload = JSON.parse(atob(token.accessToken.split('.')[1]));",
+                  "    pm.expect(payload.sub).to.eql('bar');",
+                  "    pm.expect(payload.email).to.eql('bar@example.com');",
+                  "    pm.expect(payload.role).to.eql('PointOfSale');",
+                  "});",
+                  "pm.collectionVariables.set('accessToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"bar\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Saves the token into `accessToken`, used as the collection's bearer token."
+          }
+        },
+        {
+          "name": "Get admin token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json();",
+                  "pm.test('Carries the Admin role', () => pm.expect(token.role).to.eql('Admin'));",
+                  "pm.collectionVariables.set('adminToken', token.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"demo\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "Saves the back-office token into `adminToken`; the admin requests below override the collection auth with it."
+          }
+        },
+        {
+          "name": "Get token - wrong password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Does not say whether the user exists', () => {",
+                  "    pm.expect(pm.response.json().code).to.eql('Auth.InvalidCredentials');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"bar\",\n  \"password\": \"not-the-password\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            },
+            "description": "An unknown user gets exactly the same answer, so the endpoint cannot be used to enumerate accounts."
+          }
+        },
+        {
+          "name": "Get token - missing fields (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Reports both fields at once', () => {",
+                  "    pm.expect(pm.response.json().errors).to.include.all.keys('Username', 'Password');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"\",\n  \"password\": \"\"\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth/token",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["auth", "token"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Proxied routes",
+      "description": "The same endpoints the service collections call directly, reached through `/api/*` on the Gateway.",
+      "item": [
+        {
+          "name": "List products (proxied to Catalog)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the catalog', () => pm.expect(pm.response.json()).to.be.an('array').that.is.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/products",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "YARP forwards to the `catalog` cluster, resolved through Aspire service discovery."
+          }
+        },
+        {
+          "name": "List products - no token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Asks for a bearer token', () => {",
+                  "    pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('Bearer');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/products",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Rejected by the Gateway; Catalog never sees the request."
+          }
+        },
+        {
+          "name": "List orders (proxied to Ordering)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the customer orders', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/orders",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Ordering reads the customer id from the `sub` claim of the forwarded token, not from a header."
+          }
+        },
+        {
+          "name": "Get stock (proxied to Inventory)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the stock row', () => {",
+                  "    pm.expect(pm.response.json()[0].sku).to.eql('GOLDEN-LAGER-350');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/stock?sku=GOLDEN-LAGER-350",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "stock"],
+              "query": [
+                { "key": "sku", "value": "GOLDEN-LAGER-350" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Roles",
+      "item": [
+        {
+          "name": "Update stock as point of sale (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityAvailable\": 100\n}" },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/stock/GOLDEN-LAGER-350",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "stock", "GOLDEN-LAGER-350"]
+            },
+            "description": "Authenticated but not authorized: the route requires the `Admin` policy. Nothing is forwarded to Inventory."
+          }
+        },
+        {
+          "name": "Create product as admin (201)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Unique SKU per run so the collection can be executed repeatedly.",
+                  "pm.collectionVariables.set('createdSku', `POSTMAN-GW-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Created with the requested SKU', () => {",
+                  "    pm.expect(pm.response.json().sku).to.eql(pm.collectionVariables.get('createdSku'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                { "key": "token", "value": "{{adminToken}}", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{createdSku}}\",\n  \"name\": \"Gateway Pale Ale 355ml\",\n  \"style\": \"Ipa\",\n  \"volumeMl\": 355,\n  \"packSize\": 12,\n  \"price\": 20.50\n}"
+            },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/products",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Overrides the collection auth with `adminToken`: the same route, a different role, a different answer."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Operations",
+      "item": [
+        {
+          "name": "CORS preflight from the web app",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 204', () => pm.response.to.have.status(204));",
+                  "pm.test('Allows the web app origin without a token', () => {",
+                  "    pm.expect(pm.response.headers.get('Access-Control-Allow-Origin')).to.eql('http://localhost:5173');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "OPTIONS",
+            "header": [
+              { "key": "Origin", "value": "http://localhost:5173" },
+              { "key": "Access-Control-Request-Method", "value": "POST" },
+              { "key": "Access-Control-Request-Headers", "value": "authorization,content-type" }
+            ],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/orders",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "The browser sends this before the real request. CORS runs before authorization, so a preflight never needs a token."
+          }
+        },
+        {
+          "name": "Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Reports Healthy', () => pm.expect(pm.response.text()).to.eql('Healthy'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/health",
+              "host": ["{{gatewayBaseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Probes stay anonymous: an orchestrator has no token. Development only."
+          }
+        }
+      ]
+    }
+  ]
+}

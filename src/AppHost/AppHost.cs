@@ -7,6 +7,9 @@ var builder = DistributedApplication.CreateBuilder(args);
 // easy to find in Docker Desktop. The shared prefix keeps them grouped when sorted by name.
 const string ContainerPrefix = "msdemo-";
 
+// Configuration key "Jwt:SigningKey" in the environment variable form services read it from.
+const string JwtSigningKeyVariable = "Jwt__SigningKey";
+
 // PostgreSQL: one server container, one database per service (database-per-service pattern).
 var postgres = builder.AddPostgres("postgres")
     .WithContainerName($"{ContainerPrefix}postgres")
@@ -61,25 +64,44 @@ foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s =>
     }
 }
 
+// The Gateway signs access tokens and every service validates them, so all of them need the same key.
+// It is generated on first run and persisted to the AppHost user-secrets: a real secret, never committed.
+var jwtSigningKey = builder.AddParameter(
+    "jwt-signing-key",
+    new GenerateParameterDefault { MinLength = 64, Special = false },
+    secret: true,
+    persist: true);
+
 // Resource names double as service discovery names (e.g. Ordering calls "https+http://catalog").
 var catalog = builder.AddProject<Projects.Catalog_Api>("catalog")
     .WithReference(catalogDb)
-    .WaitFor(catalogDb);
+    .WaitFor(catalogDb)
+    .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
 
 // Ordering does not wait for Catalog on purpose: calls to it go through a resilience pipeline (retry,
 // circuit breaker, timeouts), and a missing Catalog only fails order placement with a 503.
-builder.AddProject<Projects.Ordering_Api>("ordering")
+var ordering = builder.AddProject<Projects.Ordering_Api>("ordering")
     .WithReference(orderingDb)
     .WaitFor(orderingDb)
     .WithReference(serviceBus)
     .WaitFor(serviceBus)
-    .WithReference(catalog);
+    .WithReference(catalog)
+    .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
 
 // Inventory has no synchronous callers: it only reserves stock for the orders it receives from the topic.
-builder.AddProject<Projects.Inventory_Api>("inventory")
+var inventory = builder.AddProject<Projects.Inventory_Api>("inventory")
     .WithReference(inventoryDb)
     .WaitFor(inventoryDb)
     .WithReference(serviceBus)
-    .WaitFor(serviceBus);
+    .WaitFor(serviceBus)
+    .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
+
+// Single entry point for every client: it issues the demo tokens and proxies /api/* to the services.
+builder.AddProject<Projects.Gateway>("gateway")
+    .WithReference(catalog)
+    .WithReference(ordering)
+    .WithReference(inventory)
+    .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey)
+    .WithExternalHttpEndpoints();
 
 builder.Build().Run();

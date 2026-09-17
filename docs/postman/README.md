@@ -5,13 +5,30 @@ Each request has test scripts, so a collection doubles as a quick smoke test.
 
 | Collection | Service | Base URL variable |
 |---|---|---|
-| [catalog.postman_collection.json](catalog.postman_collection.json) | Catalog | `catalogBaseUrl` |
-| [ordering.postman_collection.json](ordering.postman_collection.json) | Ordering | `orderingBaseUrl` |
-| [inventory.postman_collection.json](inventory.postman_collection.json) | Inventory | `inventoryBaseUrl` (also uses `orderingBaseUrl`) |
+| [gateway.postman_collection.json](gateway.postman_collection.json) | Gateway | `gatewayBaseUrl` |
+| [catalog.postman_collection.json](catalog.postman_collection.json) | Catalog | `catalogBaseUrl` (also uses `gatewayBaseUrl`) |
+| [ordering.postman_collection.json](ordering.postman_collection.json) | Ordering | `orderingBaseUrl` (also uses `gatewayBaseUrl`) |
+| [inventory.postman_collection.json](inventory.postman_collection.json) | Inventory | `inventoryBaseUrl` (also uses `orderingBaseUrl` and `gatewayBaseUrl`) |
 
 [local.postman_environment.json](local.postman_environment.json) holds the base URL of every service when running
 through Aspire. Collections also define their base URL as a collection variable, so they work without the environment.
-Once the Gateway exists (phase 6), point the base URLs to it in a separate environment.
+
+## Authentication
+
+Every endpoint requires a JWT. Only the Gateway issues one, so every collection starts with a **Sign in** folder
+that calls `POST {{gatewayBaseUrl}}/auth/token` and stores the token in a collection variable; the collection then
+sends it as a bearer token. Demo accounts, all with password `demo`:
+
+| User | Role | Can |
+|---|---|---|
+| `bar`, `market` | `PointOfSale` | Read the catalog and the stock, place and read **their own** orders |
+| `admin` | `Admin` | Everything above, plus `POST`/`PUT /api/products` and `PUT /api/stock/{sku}` |
+
+The service collections call the services directly on purpose: a token issued by the Gateway is validated by each
+service on its own, so the same request works with or without the proxy in between.
+
+`POST /auth/token` is rate limited (10 requests per minute per client), so running several collections back to back
+within a minute can answer `429`.
 
 ## Use
 
@@ -23,14 +40,15 @@ Once the Gateway exists (phase 6), point the base URLs to it in a separate envir
 From the command line with [newman](https://github.com/postmanlabs/newman):
 
 ```bash
+npx newman run docs/postman/gateway.postman_collection.json -e docs/postman/local.postman_environment.json
 npx newman run docs/postman/catalog.postman_collection.json -e docs/postman/local.postman_environment.json
 npx newman run docs/postman/ordering.postman_collection.json -e docs/postman/local.postman_environment.json
 npx newman run docs/postman/inventory.postman_collection.json -e docs/postman/local.postman_environment.json
 ```
 
 Command requests create their own test data (e.g. `POSTMAN-TEST-*` products) and never modify seed data.
-The Ordering collection places orders for a new `postman-<timestamp>` customer per run (sent in the temporary
-`X-Customer-Id` header until JWT arrives in phase 6), so its list assertions only see that run's orders.
+The Ordering collection signs in as `bar` and asserts that the order it just placed leads the list; a second sign-in
+as `market` shows that one point of sale gets a `404`, not a `403`, for another one's order.
 
 The Inventory collection is the one that exercises the **whole order flow**: its *Order flow (end to end)* folder
 places orders in Ordering, polls until the choreography saga answers (`Confirmed` / `Rejected`) and then checks the

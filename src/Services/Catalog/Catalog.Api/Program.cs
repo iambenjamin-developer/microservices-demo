@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
+using BuildingBlocks.Web.Authentication;
 using BuildingBlocks.Web.Endpoints;
+using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using Catalog.Api.Features;
 using Catalog.Api.Persistence;
@@ -14,8 +16,10 @@ builder.AddNpgsqlDbContext<CatalogDbContext>(
     CatalogDbContext.ConnectionName,
     configureDbContextOptions: options => options.UseCatalogSeeding());
 
+builder.AddJwtAuthentication();
+
 builder.Services.AddApiProblemDetails();
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
@@ -29,9 +33,12 @@ app.UseApiExceptionHandling();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapOpenApi().AllowAnonymous();
+    app.MapScalarApiReference().AllowAnonymous();
 }
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapDefaultEndpoints();
 app.MapEndpoints();
