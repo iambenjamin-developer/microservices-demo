@@ -16,4 +16,7 @@
   <Folder Name="/src/Services/Ordering/">
     <Project Path="src/Services/Ordering/Ordering.Domain/Ordering.Domain.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ordering.Domain.UnitTests/Ordering.Domain.UnitTests.csproj" />
+  </Folder>
 </Solution>
