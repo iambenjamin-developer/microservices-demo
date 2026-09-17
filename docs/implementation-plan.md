@@ -167,7 +167,8 @@ microservices-demo/
 │  ├─ BuildingBlocks/
 │  │  ├─ BuildingBlocks.Common/     Result, Error, guard helpers
 │  │  ├─ BuildingBlocks.Contracts/  Integration events
-│  │  └─ BuildingBlocks.Messaging/  IEventBus, Service Bus adapter, Outbox, Inbox, consumer host
+│  │  ├─ BuildingBlocks.Messaging/  IEventBus, Service Bus adapter, Outbox, Inbox, consumer host
+│  │  └─ BuildingBlocks.Web/        Result → ProblemDetails, validation filter, endpoint discovery
 │  ├─ Gateway/
 │  ├─ Services/
 │  │  ├─ Catalog/Catalog.Api/
@@ -242,8 +243,8 @@ push, and update the **Status** column and the phase notes below.
 |---|---|---|---|---|
 | 0 | Plan & repo foundation | ✅ Done | This plan, `global.json`, `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, solution (`.slnx`), `CLAUDE.md` | `docs: add implementation plan`, `build: add solution and shared build configuration` |
 | 1 | Aspire & building blocks | ✅ Done | AppHost (PostgreSQL, Service Bus emulator with topics/subscriptions), ServiceDefaults, `Result`, contracts, `IEventBus`, Outbox/Inbox + processor, Service Bus smoke test tool | `feat(building-blocks): ...`, `feat(apphost): ...`, `chore(tools): ...` |
-| 2 | Catalog | ⏳ Next | Entity, EF configuration, migration, seed (fictional brands + "Duff-Style Classic Lager"), endpoints, validation, ProblemDetails mapping for `Result` | `feat(catalog): ...` |
-| 3 | Ordering domain | ⬜ | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
+| 2 | Catalog | ✅ Done | Entity, EF configuration, migration, seed (fictional brands + "Duff-Style Classic Lager"), endpoints, validation, ProblemDetails mapping for `Result` | `feat(catalog): ...` |
+| 3 | Ordering domain | ⏳ Next | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
 | 4 | Ordering application & API | ⬜ | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
 | 5 | Inventory & end-to-end flow | ⬜ | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
 | 6 | Gateway & auth | ⬜ | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
@@ -263,6 +264,14 @@ Decisions and facts discovered during implementation that the next phases depend
   - Emulator AMQP port is fixed to `5672`; `tools/servicebus-smoke.cs` sends/peeks/receives against it.
   - Database resource names in the AppHost: `catalogdb`, `orderingdb`, `inventorydb`, `notificationsdb`.
   - `ServiceDefaults` adds `AddStandardResilienceHandler()` to every `HttpClient`; clients with a custom Polly pipeline must call `RemoveAllResilienceHandlers()` first.
+- **Phase 2**
+  - `BuildingBlocks.Web` (new) is shared by every HTTP service: `AddApiProblemDetails()` + `UseApiExceptionHandling()` (all errors are RFC 9457 with `traceId`; binding errors stay 4xx), `Result.ToProblem()` (`Validation→400`, `NotFound→404`, `Conflict→409`, otherwise 500, plus a `code` extension), `.WithRequestValidation<TRequest>()` (FluentValidation endpoint filter → 400 `ValidationProblem`) and `IEndpoint` + `AddEndpoints(assembly)`/`MapEndpoints()`.
+  - Vertical slice layout: `Features/<Area>/<Feature>/` with `Endpoint`, `Request`, `Handler`, `Validator`; handlers are registered explicitly in `CatalogFeatures`. Handlers return `Result<T>`; endpoints return typed `Results<...>` so OpenAPI documents every response.
+  - Catalog runs as Aspire resource **`catalog`** → Ordering must use `https+http://catalog`.
+  - `GET /api/products?sku=A&sku=B` returns only those SKUs (max 100, case-insensitive) — Ordering uses it to snapshot prices in one call. Response: `id, sku, name, style, volumeMl, packSize, price` (price per pack, `numeric(10,2)`; enums serialized as strings).
+  - The SKU (uppercase, e.g. `GOLDEN-LAGER-350`) is the cross-service identity and is immutable (not in the PUT body). Inventory must seed stock for the 8 SKUs in `CatalogSeeder`.
+  - Migrations are applied at startup and seeding uses EF Core `UseSeeding`/`UseAsyncSeeding` (only into an empty table). A design-time factory lets `dotnet ef migrations add` run without Aspire: `dotnet ef migrations add <Name> --project src/Services/Catalog/Catalog.Api --output-dir Persistence/Migrations`.
+  - `POST`/`PUT` are anonymous until phase 6 (`TODO(phase 6)` marks where the Admin policy goes).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.

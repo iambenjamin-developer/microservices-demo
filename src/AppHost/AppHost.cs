@@ -10,7 +10,7 @@ var postgres = builder.AddPostgres("postgres")
     .WithLifetime(ContainerLifetime.Persistent);
 
 // Services are added phase by phase and will reference these databases.
-postgres.AddDatabase("catalogdb");
+var catalogDb = postgres.AddDatabase("catalogdb");
 postgres.AddDatabase("orderingdb");
 postgres.AddDatabase("inventorydb");
 postgres.AddDatabase("notificationsdb");
@@ -47,5 +47,10 @@ foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s =>
             });
     }
 }
+
+// Resource names double as service discovery names (e.g. Ordering calls "https+http://catalog").
+builder.AddProject<Projects.Catalog_Api>("catalog")
+    .WithReference(catalogDb)
+    .WaitFor(catalogDb);
 
 builder.Build().Run();
