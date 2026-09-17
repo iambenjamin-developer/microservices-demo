@@ -11,7 +11,7 @@ var postgres = builder.AddPostgres("postgres")
 
 // Services are added phase by phase and will reference these databases.
 var catalogDb = postgres.AddDatabase("catalogdb");
-postgres.AddDatabase("orderingdb");
+var orderingDb = postgres.AddDatabase("orderingdb");
 postgres.AddDatabase("inventorydb");
 postgres.AddDatabase("notificationsdb");
 
@@ -49,8 +49,17 @@ foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s =>
 }
 
 // Resource names double as service discovery names (e.g. Ordering calls "https+http://catalog").
-builder.AddProject<Projects.Catalog_Api>("catalog")
+var catalog = builder.AddProject<Projects.Catalog_Api>("catalog")
     .WithReference(catalogDb)
     .WaitFor(catalogDb);
+
+// Ordering does not wait for Catalog on purpose: calls to it go through a resilience pipeline (retry,
+// circuit breaker, timeouts), and a missing Catalog only fails order placement with a 503.
+builder.AddProject<Projects.Ordering_Api>("ordering")
+    .WithReference(orderingDb)
+    .WaitFor(orderingDb)
+    .WithReference(serviceBus)
+    .WaitFor(serviceBus)
+    .WithReference(catalog);
 
 builder.Build().Run();
