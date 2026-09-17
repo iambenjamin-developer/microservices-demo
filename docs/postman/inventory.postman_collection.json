@@ -1,0 +1,509 @@
+{
+  "info": {
+    "name": "Inventory API",
+    "description": "Inventory service endpoints (phase 5) plus the end-to-end order flow they complete.\n\nBase URL: `{{inventoryBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5103`). Every error response is RFC 9457 `application/problem+json`.\n\nStock is counted in **packs**, the same unit Catalog prices and Ordering buys. Reserving moves packs from `quantityAvailable` to `quantityReserved`; `quantityOnHand` is the sum of both.\n\nThe **Order flow (end to end)** folder needs Ordering and Catalog running as well (`{{orderingBaseUrl}}`): it places an order, waits for the saga (Ordering → Service Bus → Inventory → Service Bus → Ordering) and checks both the order status and the stock that moved. It is repeatable: it tops the SKU up before reserving, and the rejected path asks for more packs than the warehouse could ever hold.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "inventoryBaseUrl", "value": "http://localhost:5103" },
+    { "key": "orderingBaseUrl", "value": "http://localhost:5102" },
+    { "key": "flowSku", "value": "GOLDEN-LAGER-350" },
+    { "key": "shortSku", "value": "MIDNIGHT-STOUT-500" },
+    { "key": "customerId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "reservedBefore", "value": "0" },
+    { "key": "pollAttempts", "value": "0" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Fallback when a request is sent on its own before the end-to-end folder ever ran.",
+          "if (!pm.collectionVariables.get('customerId')) {",
+          "    pm.collectionVariables.set('customerId', `postman-${Date.now()}`);",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Shared helper: every non-2xx response must be a ProblemDetails body with a trace id.",
+          "if (pm.response.code >= 400) {",
+          "    pm.test('Error is RFC 9457 ProblemDetails with traceId', () => {",
+          "        pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+          "        const problem = pm.response.json();",
+          "        pm.expect(problem.status).to.eql(pm.response.code);",
+          "        pm.expect(problem).to.have.property('traceId');",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Stock - queries",
+      "item": [
+        {
+          "name": "Get stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json();",
+                  "pm.test('The seeded catalog SKUs are stocked', () => {",
+                  "    pm.expect(stock.length).to.be.at.least(8);",
+                  "    pm.expect(stock.map(item => item.sku)).to.include.members(['GOLDEN-LAGER-350', 'DUFF-STYLE-CLASSIC-350']);",
+                  "});",
+                  "pm.test('Rows are sorted by SKU', () => {",
+                  "    const skus = stock.map(item => item.sku);",
+                  "    pm.expect(skus).to.eql([...skus].sort());",
+                  "});",
+                  "pm.test('quantityOnHand is available + reserved', () => {",
+                  "    stock.forEach(item => pm.expect(item.quantityOnHand).to.eql(item.quantityAvailable + item.quantityReserved));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock"]
+            },
+            "description": "Lists the stock of every SKU. The seed mirrors the Catalog seed, with `MIDNIGHT-STOUT-500` deliberately short so a rejected order is easy to demo."
+          }
+        },
+        {
+          "name": "Get stock - filtered by SKU",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json();",
+                  "pm.test('Only the requested SKUs come back, normalized', () => {",
+                  "    pm.expect(stock.map(item => item.sku)).to.eql(['GOLDEN-LAGER-350', 'MIDNIGHT-STOUT-500']);",
+                  "});",
+                  "pm.test('An unknown SKU is simply absent (no error)', () => {",
+                  "    pm.expect(stock.map(item => item.sku)).to.not.include('NOT-STOCKED-001');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock?sku=golden-lager-350&sku=MIDNIGHT-STOUT-500&sku=NOT-STOCKED-001",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock"],
+              "query": [
+                { "key": "sku", "value": "golden-lager-350" },
+                { "key": "sku", "value": "MIDNIGHT-STOUT-500" },
+                { "key": "sku", "value": "NOT-STOCKED-001" }
+              ]
+            },
+            "description": "`?sku=A&sku=B` (max 100, case-insensitive) so a client can check only the SKUs in its cart."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stock - commands",
+      "item": [
+        {
+          "name": "Update stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json();",
+                  "pm.test('The available quantity is the one that was sent', () => {",
+                  "    pm.expect(stock.sku).to.eql('HOPPY-TRAIL-IPA-473');",
+                  "    pm.expect(stock.quantityAvailable).to.eql(120);",
+                  "});",
+                  "pm.test('Reserved packs are untouched: they belong to orders already placed', () => {",
+                  "    pm.expect(stock.quantityOnHand).to.eql(120 + stock.quantityReserved);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityAvailable\": 120\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock/hoppy-trail-ipa-473",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock", "hoppy-trail-ipa-473"]
+            },
+            "description": "Replenishment (Admin once phase 6 adds JWT). The SKU in the URL is case-insensitive and only the available quantity is set; reserved packs are not part of the request."
+          }
+        },
+        {
+          "name": "Update stock - unknown SKU (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Error code is Stock.NotFound', () => {",
+                  "    pm.expect(pm.response.json().code).to.eql('Stock.NotFound');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityAvailable\": 10\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock/NOT-STOCKED-001",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock", "NOT-STOCKED-001"]
+            },
+            "description": "Stock is only kept for SKUs the service already knows, so a typo in the URL cannot invent a product."
+          }
+        },
+        {
+          "name": "Update stock - negative quantity (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('The invalid field is reported', () => {",
+                  "    pm.expect(pm.response.json().errors).to.have.property('QuantityAvailable');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityAvailable\": -1\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock/{{flowSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock", "{{flowSku}}"]
+            },
+            "description": "FluentValidation runs as an endpoint filter, so invalid input never reaches the handler."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Order flow (end to end)",
+      "item": [
+        {
+          "name": "Top the SKU up",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// New customer per run, so the order list of Ordering only shows this run's orders.",
+                  "pm.collectionVariables.set('customerId', `postman-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json();",
+                  "pm.test('100 packs are available for the flow', () => pm.expect(stock.quantityAvailable).to.eql(100));",
+                  "// Reserved packs accumulate across runs (the demo never releases them), so remember the baseline.",
+                  "pm.collectionVariables.set('reservedBefore', stock.quantityReserved);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityAvailable\": 100\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock/{{flowSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock", "{{flowSku}}"]
+            },
+            "description": "Makes the flow repeatable: whatever previous runs reserved, the SKU starts with 100 available packs."
+          }
+        },
+        {
+          "name": "Place order within stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202 Accepted', () => pm.response.to.have.status(202));",
+                  "const order = pm.response.json();",
+                  "pm.test('The order starts as Pending', () => pm.expect(order.status).to.eql('Pending'));",
+                  "pm.collectionVariables.set('orderId', order.id);",
+                  "pm.collectionVariables.set('pollAttempts', 0);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"{{flowSku}}\", \"quantity\": 2 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Sent to **Ordering**, not Inventory: the order is saved as `Pending` with an `OrderPlaced` outbox message, which Inventory picks up from the `order-events` topic."
+          }
+        },
+        {
+          "name": "Order becomes Confirmed",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The saga is asynchronous (outbox poll + two broker hops), so give it a moment between attempts.",
+                  "// setTimeout is how a Postman script sleeps: the sandbox waits for pending timers before sending.",
+                  "setTimeout(() => {}, 1000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const order = pm.response.json();",
+                  "const attempts = Number(pm.collectionVariables.get('pollAttempts')) + 1;",
+                  "pm.collectionVariables.set('pollAttempts', attempts);",
+                  "",
+                  "if (order.status === 'Pending' && attempts < 15) {",
+                  "    pm.execution.setNextRequest('Order becomes Confirmed');",
+                  "} else {",
+                  "    pm.test(`Order is Confirmed after ${attempts} attempt(s)`, () => {",
+                  "        pm.expect(order.status).to.eql('Confirmed');",
+                  "        pm.expect(order.completedOnUtc).to.not.be.null;",
+                  "        pm.expect(order.rejectionReason).to.be.null;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Customer-Id", "value": "{{customerId}}" }],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders", "{{orderId}}"]
+            },
+            "description": "Polls Ordering until Inventory's `StockReserved` has been consumed. This is the whole saga: OrderPlaced → reservation → StockReserved → OrderConfirmed."
+          }
+        },
+        {
+          "name": "Stock moved to reserved",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json()[0];",
+                  "const reservedBefore = Number(pm.collectionVariables.get('reservedBefore'));",
+                  "pm.test('The 2 ordered packs moved from available to reserved', () => {",
+                  "    pm.expect(stock.quantityAvailable).to.eql(98);",
+                  "    pm.expect(stock.quantityReserved).to.eql(reservedBefore + 2);",
+                  "    pm.expect(stock.quantityOnHand).to.eql(100 + reservedBefore);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock?sku={{flowSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock"],
+              "query": [{ "key": "sku", "value": "{{flowSku}}" }]
+            },
+            "description": "Nothing left the warehouse yet: the packs are reserved, not shipped, so `quantityOnHand` does not change."
+          }
+        },
+        {
+          "name": "Place order beyond stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('The order starts as Pending, like any other', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('Pending');",
+                  "});",
+                  "pm.collectionVariables.set('orderId', pm.response.json().id);",
+                  "pm.collectionVariables.set('pollAttempts', 0);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"{{flowSku}}\", \"quantity\": 1 },\n    { \"sku\": \"{{shortSku}}\", \"quantity\": 1000 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "1000 packs of the short SKU: more than the warehouse holds, so the reservation is rejected. The other line is available on purpose — it must **not** be reserved (all or nothing)."
+          }
+        },
+        {
+          "name": "Order becomes Rejected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 1000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const order = pm.response.json();",
+                  "const attempts = Number(pm.collectionVariables.get('pollAttempts')) + 1;",
+                  "pm.collectionVariables.set('pollAttempts', attempts);",
+                  "",
+                  "if (order.status === 'Pending' && attempts < 15) {",
+                  "    pm.execution.setNextRequest('Order becomes Rejected');",
+                  "} else {",
+                  "    pm.test(`Order is Rejected after ${attempts} attempt(s)`, () => {",
+                  "        pm.expect(order.status).to.eql('Rejected');",
+                  "        pm.expect(order.completedOnUtc).to.not.be.null;",
+                  "    });",
+                  "    pm.test('The rejection names the SKU that blocked it', () => {",
+                  "        pm.expect(order.rejectionReason).to.include(pm.collectionVariables.get('shortSku'));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Customer-Id", "value": "{{customerId}}" }],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders", "{{orderId}}"]
+            },
+            "description": "The compensation path: `StockRejected` carries the reason and the unavailable SKUs, and Ordering stores them on the order."
+          }
+        },
+        {
+          "name": "Nothing was reserved for the rejected order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const stock = pm.response.json()[0];",
+                  "const reservedBefore = Number(pm.collectionVariables.get('reservedBefore'));",
+                  "pm.test('All or nothing: the available line of the rejected order was not reserved', () => {",
+                  "    pm.expect(stock.quantityAvailable).to.eql(98);",
+                  "    pm.expect(stock.quantityReserved).to.eql(reservedBefore + 2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/api/stock?sku={{flowSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["api", "stock"],
+              "query": [{ "key": "sku", "value": "{{flowSku}}" }]
+            },
+            "description": "Same numbers as after the confirmed order: the rejected order reserved nothing at all."
+          }
+        }
+      ]
+    }
+  ]
+}

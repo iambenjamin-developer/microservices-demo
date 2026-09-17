@@ -13,6 +13,9 @@
   <Folder Name="/src/Services/Catalog/">
     <Project Path="src/Services/Catalog/Catalog.Api/Catalog.Api.csproj" />
   </Folder>
+  <Folder Name="/src/Services/Inventory/">
+    <Project Path="src/Services/Inventory/Inventory.Api/Inventory.Api.csproj" />
+  </Folder>
   <Folder Name="/src/Services/Ordering/">
     <Project Path="src/Services/Ordering/Ordering.Api/Ordering.Api.csproj" />
     <Project Path="src/Services/Ordering/Ordering.Application/Ordering.Application.csproj" />
@@ -21,6 +24,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Architecture.Tests/Architecture.Tests.csproj" />
+    <Project Path="tests/Inventory.UnitTests/Inventory.UnitTests.csproj" />
     <Project Path="tests/Ordering.Application.UnitTests/Ordering.Application.UnitTests.csproj" />
     <Project Path="tests/Ordering.Domain.UnitTests/Ordering.Domain.UnitTests.csproj" />
     <Project Path="tests/Ordering.IntegrationTests/Ordering.IntegrationTests.csproj" />

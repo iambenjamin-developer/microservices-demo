@@ -17,7 +17,7 @@ var postgres = builder.AddPostgres("postgres")
 // Services are added phase by phase and will reference these databases.
 var catalogDb = postgres.AddDatabase("catalogdb");
 var orderingDb = postgres.AddDatabase("orderingdb");
-postgres.AddDatabase("inventorydb");
+var inventoryDb = postgres.AddDatabase("inventorydb");
 postgres.AddDatabase("notificationsdb");
 
 // Azure Service Bus emulator. Topics, subscriptions and filters come from the shared Topology,
@@ -74,5 +74,12 @@ builder.AddProject<Projects.Ordering_Api>("ordering")
     .WithReference(serviceBus)
     .WaitFor(serviceBus)
     .WithReference(catalog);
+
+// Inventory has no synchronous callers: it only reserves stock for the orders it receives from the topic.
+builder.AddProject<Projects.Inventory_Api>("inventory")
+    .WithReference(inventoryDb)
+    .WaitFor(inventoryDb)
+    .WithReference(serviceBus)
+    .WaitFor(serviceBus);
 
 builder.Build().Run();
