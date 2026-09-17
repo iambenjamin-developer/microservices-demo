@@ -17,6 +17,7 @@ public static class MessagingServiceCollectionExtensions
     {
         builder.AddAzureServiceBusClient(Topology.ServiceBusConnectionName);
 
+        builder.Services.AddOptions<ConsumerOptions>().BindConfiguration(ConsumerOptions.SectionName);
         builder.Services.TryAddSingleton(TimeProvider.System);
         builder.Services.TryAddSingleton<IEventBus, AzureServiceBusEventBus>();
         builder.Services.TryAddSingleton<IntegrationEventHandlerRegistry>();

@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BuildingBlocks.Messaging.Consumers;
 
@@ -22,6 +23,7 @@ internal sealed partial class ServiceBusSubscriptionProcessor<TDbContext>(
     ServiceBusClient client,
     IntegrationEventHandlerRegistry registry,
     IServiceScopeFactory scopeFactory,
+    IOptions<ConsumerOptions> options,
     TimeProvider timeProvider,
     ILogger<ServiceBusSubscriptionProcessor<TDbContext>> logger) : BackgroundService
     where TDbContext : DbContext
@@ -32,6 +34,12 @@ internal sealed partial class ServiceBusSubscriptionProcessor<TDbContext>(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!options.Value.Enabled)
+        {
+            LogDisabled(logger, subscription);
+            return;
+        }
+
         _processor = client.CreateProcessor(topic, subscription, new ServiceBusProcessorOptions
         {
             AutoCompleteMessages = false,
@@ -143,6 +151,9 @@ internal sealed partial class ServiceBusSubscriptionProcessor<TDbContext>(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "No handler for subject {Subject} on {Subscription}; message completed")]
     private static partial void LogUnknownSubject(ILogger logger, string subject, string subscription);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Consumers are disabled; subscription {Subscription} is not processed")]
+    private static partial void LogDisabled(ILogger logger, string subscription);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Service Bus processor error ({ErrorSource}) on {EntityPath}")]
     private static partial void LogProcessorError(ILogger logger, Exception exception, string errorSource, string entityPath);

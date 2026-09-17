@@ -61,6 +61,20 @@ internal sealed partial class OutboxProcessor<TDbContext>(
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TDbContext>();
 
+        // A retrying execution strategy (enabled by Aspire's Npgsql integration) rejects user-initiated
+        // transactions unless the whole unit runs inside the strategy, so a transient failure retries all of it.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(
+            (Processor: this, DbContext: dbContext),
+            static (_, state, cancellationToken) => state.Processor.PublishBatchAsync(state.DbContext, cancellationToken),
+            verifySucceeded: null,
+            cancellationToken);
+    }
+
+    private async Task<int> PublishBatchAsync(TDbContext dbContext, CancellationToken cancellationToken)
+    {
+        dbContext.ChangeTracker.Clear();
+
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         var messages = await dbContext.Set<OutboxMessage>()

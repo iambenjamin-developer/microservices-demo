@@ -54,14 +54,23 @@ public static class ProblemDetailsExtensions
             ErrorType.Validation => (StatusCodes.Status400BadRequest, "Bad Request", "https://tools.ietf.org/html/rfc9110#section-15.5.1"),
             ErrorType.NotFound => (StatusCodes.Status404NotFound, "Not Found", "https://tools.ietf.org/html/rfc9110#section-15.5.5"),
             ErrorType.Conflict => (StatusCodes.Status409Conflict, "Conflict", "https://tools.ietf.org/html/rfc9110#section-15.5.10"),
+            ErrorType.Unavailable => (StatusCodes.Status503ServiceUnavailable, "Service Unavailable", "https://tools.ietf.org/html/rfc9110#section-15.6.4"),
             _ => (StatusCodes.Status500InternalServerError, "Internal Server Error", "https://tools.ietf.org/html/rfc9110#section-15.6.1"),
         };
+
+        var extensions = new Dictionary<string, object?> { ["code"] = error.Code };
+
+        // Same "errors" shape as the ValidationProblem returned by the request validation filter.
+        if (error is ValidationError validationError)
+        {
+            extensions["errors"] = validationError.Errors;
+        }
 
         return TypedResults.Problem(
             statusCode: statusCode,
             title: title,
             type: type,
             detail: error.Description,
-            extensions: new Dictionary<string, object?> { ["code"] = error.Code });
+            extensions: extensions);
     }
 }

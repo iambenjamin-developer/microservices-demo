@@ -17,8 +17,21 @@ public interface IOutbox
 internal sealed class EfOutbox<TDbContext>(TDbContext dbContext) : IOutbox
     where TDbContext : DbContext
 {
-    public void Add(IntegrationEvent integrationEvent, string? correlationId = null)
+    public void Add(IntegrationEvent integrationEvent, string? correlationId = null) =>
+        dbContext.AddToOutbox(integrationEvent, correlationId);
+}
+
+public static class OutboxDbContextExtensions
+{
+    /// <summary>
+    /// Same as <see cref="IOutbox.Add"/> for code that already holds the <see cref="DbContext"/>,
+    /// such as a <c>SaveChanges</c> interceptor that cannot depend on a service built from that context.
+    /// </summary>
+    public static void AddToOutbox(this DbContext dbContext, IntegrationEvent integrationEvent, string? correlationId = null)
     {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(integrationEvent);
+
         var eventType = integrationEvent.GetType();
 
         dbContext.Set<OutboxMessage>().Add(new OutboxMessage
