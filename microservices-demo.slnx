@@ -20,6 +20,9 @@
     <Project Path="src/Services/Ordering/Ordering.Infrastructure/Ordering.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Architecture.Tests/Architecture.Tests.csproj" />
+    <Project Path="tests/Ordering.Application.UnitTests/Ordering.Application.UnitTests.csproj" />
     <Project Path="tests/Ordering.Domain.UnitTests/Ordering.Domain.UnitTests.csproj" />
+    <Project Path="tests/Ordering.IntegrationTests/Ordering.IntegrationTests.csproj" />
   </Folder>
 </Solution>
