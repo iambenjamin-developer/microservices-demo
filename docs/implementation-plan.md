@@ -132,7 +132,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Null Object | `NoOpEmailSender` when `Email:Enabled = false` — no `if` checks spread through the code |
 | Result Pattern | `Result` / `Result<T>` + `Error`, mapped to RFC 9457 `ProblemDetails` |
 | Object Mapping (Mapster) | Ordering and Inventory: `IRegister` configs + `IMapper`, `ProjectToType<T>()` for EF reads. **Catalog maps by hand on purpose** (expression projection + `FromProduct`) to show both approaches side by side |
-| Options Pattern | `ServiceBusOptions`, `JwtOptions`, `DiscountOptions` |
+| Options Pattern | `PricingOptions` (currency + discount tiers), `CatalogClientOptions`, `OutboxOptions`, `JwtOptions` |
 | Dependency Injection | Everywhere |
 | Test Data Builder | `OrderBuilder` in tests |
 
@@ -180,6 +180,7 @@ microservices-demo/
 │  └─ Web/                          React app
 ├─ tests/
 │  ├─ Ordering.Domain.UnitTests/
+│  ├─ Ordering.Application.UnitTests/
 │  ├─ Inventory.UnitTests/
 │  ├─ Ordering.IntegrationTests/
 │  └─ Architecture.Tests/
@@ -222,9 +223,10 @@ for anyone who clones it without credentials.
 | Level | Project | What |
 |---|---|---|
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
+| Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, strict Mapster config compile |
 | Unit | `Inventory.UnitTests` | All-or-nothing reservation rules |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; `IEventBus` faked |
-| Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure; Application has no dependency on Infrastructure |
+| Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; endpoints do not use Infrastructure |
 
 Principle: fast tests on business rules, real infrastructure where mocks would lie (database), coverage as a signal, not a goal.
 
@@ -248,8 +250,8 @@ push, and update the **Status** column and the phase notes below.
 | 1 | Aspire & building blocks | ✅ Done | AppHost (PostgreSQL, Service Bus emulator with topics/subscriptions), ServiceDefaults, `Result`, contracts, `IEventBus`, Outbox/Inbox + processor, Service Bus smoke test tool | `feat(building-blocks): ...`, `feat(apphost): ...`, `chore(tools): ...` |
 | 2 | Catalog | ✅ Done | Entity, EF configuration, migration, seed (fictional brands + "Duff-Style Classic Lager"), endpoints, validation, ProblemDetails mapping for `Result` | `feat(catalog): ...` |
 | 3 | Ordering domain | ✅ Done | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
-| 4 | Ordering application & API | ⏳ Next | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, Mapster read mappings (aggregate → DTO only), integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
-| 5 | Inventory & end-to-end flow | ⬜ | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
+| 4 | Ordering application & API | ✅ Done | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, Mapster read mappings (aggregate → DTO only), integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
+| 5 | Inventory & end-to-end flow | ⏳ Next | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
 | 6 | Gateway & auth | ⬜ | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
 | 7 | Notifications | ⬜ | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
 | 8 | Web | ⬜ | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
@@ -284,6 +286,18 @@ Decisions and facts discovered during implementation that the next phases depend
   - Aggregates collect events in `DomainEvents`; persistence must translate them to integration events in the outbox and then call `ClearDomainEvents()`. Mapping is 1:1 (`OrderPlacedDomainEvent → OrderPlaced`, `OrderConfirmedDomainEvent → OrderConfirmed`, `OrderRejectedDomainEvent → OrderRejected`); reuse `IDomainEvent.EventId` as the integration event `EventId` so a retried save cannot produce a second message.
   - Discounts use the Strategy pattern: `IDiscountPolicy.CalculateDiscount(subtotal, totalQuantity)`, implemented by `VolumeDiscountPolicy(tiers)` (highest reached tier wins; rates in (0, 0.5]; invalid tiers throw at construction) and `NoDiscountPolicy.Instance` (Null Object). Phase 4 binds `DiscountOptions` to the tiers and registers the policy.
   - Tests: `tests/Ordering.Domain.UnitTests` with xUnit v3 (VSTest runner, test projects are `OutputType=Exe`), Shouldly, NSubstitute and coverlet; `Builders/OrderBuilder` is the Test Data Builder.
+- **Phase 4**
+  - Projects: `Ordering.Application` (references Domain only + FluentValidation, Mapster, logging/options abstractions), `Ordering.Infrastructure` (EF Core, outbox/inbox, Catalog client, consumers, query handlers), `Ordering.Api` (endpoints + composition root). Aspire resource **`ordering`** (`http://localhost:5102`); it references `orderingdb`, `messaging` and `catalog` but does not `WaitFor` Catalog (the resilience pipeline covers it).
+  - Building blocks changed: `ErrorType.Unavailable` → **503**; `ValidationError` (field → messages) → 400 with the same `errors` shape as the validation filter; `DbContext.AddToOutbox(...)` for code that cannot resolve `IOutbox`; the outbox processor runs its transaction inside `CreateExecutionStrategy()` (Aspire's Npgsql retry strategy rejects user transactions otherwise); `Messaging:Consumers:Enabled=false` stops subscription processors (integration tests).
+  - CQRS: commands go through `ICommandHandler<TCommand, TResponse>` registered with `AddCommandHandler<...>()` and wrapped **logging → validation → handler** (hand-written decorators, no MediatR/Scrutor). Queries implement `IQueryHandler<,>` **in Infrastructure** (`AsNoTracking` + `ProjectToType`), so the read side never loads aggregates.
+  - `PlaceOrderCommand` commits through `IUnitOfWork`. `ConfirmOrderCommand` / `RejectOrderCommand` do **not** commit: they run inside the consumer pipeline, which saves the change, the outcome outbox row and the inbox record together. Consumers (`StockReserved/StockRejectedIntegrationEventHandler`) complete a `Conflict` (order no longer Pending) and throw anything else (e.g. unknown order → retries → DLQ).
+  - Domain events → outbox: `DomainEventsToOutboxInterceptor` (stateless `SaveChangesInterceptor`, added in `AddNpgsqlDbContext`) maps them with `IntegrationEventMapper` (manual, domain `EventId` reused) and `CorrelationId = orderId`. Inventory should follow the same idea (outbox row in the same `SaveChanges`).
+  - Persistence: tables `orders`, `order_items`, `outbox_messages`, `inbox_messages`. `Money`, `Sku` and `Quantity` are EF **complex types** (not value converters) so projections such as `Sku.Value` translate to SQL; `LineTotal` is not stored; `xmin` is the optimistic concurrency token. Migrations: `dotnet ef migrations add <Name> --project src/Services/Ordering/Ordering.Infrastructure --startup-project src/Services/Ordering/Ordering.Infrastructure --output-dir Persistence/Migrations`.
+  - Catalog client: typed `HttpClient` at `https+http://catalog`, `RemoveAllResilienceHandlers()` (experimental `EXTEXP0001`, suppressed locally) then `AddResilienceHandler("catalog")`: total timeout 10 s → retry ×3 exponential + jitter → circuit breaker (50 % over 30 s, min 5 calls, open 15 s) → attempt timeout 2 s (section `Catalog`). What survives the pipeline becomes `Catalog.Unavailable` (503). Verified live: first call ~9 s of retries, then fail-fast in ~10 ms while open.
+  - Mapster: `DependencyInjection.CreateMappingConfig()` is strict (`RequireExplicitMapping`, `RequireDestinationMemberSource`); `OrderMappingRegister` maps `Order → OrderResponse | OrderSummaryResponse`, `OrderItem → OrderItemResponse` with plain expressions (items ordered by SKU, line total rounded to cents) so the same config serves `Map` and `ProjectToType`; unit tests call `Compile()` and `CompileProjection()`.
+  - API: `POST /api/orders` → **202** + `Location` + `OrderResponse` (Pending); `GET /api/orders` (summaries, newest first, max 100); `GET /api/orders/{id}` (404 for another customer's order). Enums serialized as strings. Pricing: section `Pricing` (`Currency` USD, tiers 20 packs → 5 %, 50 → 10 %).
+  - Customer identity is temporary: `CurrentCustomer` binds `X-Customer-Id` / `X-Customer-Email`, falling back to `DemoUsers:PointOfSale` (`bar`, `bar@example.com`). `TODO(phase 6)` replaces it with JWT claims.
+  - Tests: `Ordering.Application.UnitTests` (new, 18), `Ordering.IntegrationTests` (11, `WebApplicationFactory` + Testcontainers `postgres:17-alpine`, fakes for `IEventBus` and `ICatalogClient`), `Architecture.Tests` (7, NetArchTest). Full flow checked against Aspire: `OrderPlaced` reaches `order-events/inventory`; `StockReserved`/`StockRejected` sent twice with the same `MessageId` produce one transition, one outcome event and one inbox row.
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.

@@ -1,0 +1,408 @@
+{
+  "info": {
+    "name": "Ordering API",
+    "description": "Ordering service endpoints (phase 4). Requests are ordered so the whole collection can be run top to bottom with the Collection Runner or newman: commands first (they create a fresh order), then queries that read it.\n\nBase URL: `{{orderingBaseUrl}}` (defaults to the Aspire launch profile, `http://localhost:5102`). Catalog must be running: prices are snapshotted from it. Every error response is RFC 9457 `application/problem+json`.\n\n**Customer identity (until phase 6):** the optional `X-Customer-Id` / `X-Customer-Email` headers select the point of sale; without them the configured demo customer (`bar`) is used. The collection generates a new customer id per run, so the order list only contains this run's orders.\n\n**Catalog down (503):** stop the `catalog` resource in the Aspire dashboard and send *Place order*: after the retries of the resilience pipeline the API answers `503` with code `Catalog.Unavailable`; repeated calls fail fast while the circuit is open.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "orderingBaseUrl", "value": "http://localhost:5102" },
+    { "key": "customerId", "value": "" },
+    { "key": "orderId", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Fallback when a request is sent on its own before 'Place order' ever ran.",
+          "if (!pm.collectionVariables.get('customerId')) {",
+          "    pm.collectionVariables.set('customerId', `postman-${Date.now()}`);",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Shared helper: every non-2xx response must be a ProblemDetails body with a trace id.",
+          "if (pm.response.code >= 400) {",
+          "    pm.test('Error is RFC 9457 ProblemDetails with traceId', () => {",
+          "        pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+          "        const problem = pm.response.json();",
+          "        pm.expect(problem.status).to.eql(pm.response.code);",
+          "        pm.expect(problem).to.have.property('traceId');",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Orders - commands",
+      "item": [
+        {
+          "name": "Place order",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// New customer per run (collection variables persist in the Postman app), so list assertions only see this run's order.",
+                  "pm.collectionVariables.set('customerId', `postman-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202 Accepted', () => pm.response.to.have.status(202));",
+                  "const order = pm.response.json();",
+                  "pm.test('Location header points to the new order', () => {",
+                  "    pm.expect(pm.response.headers.get('Location')).to.include(`/api/orders/${order.id}`);",
+                  "});",
+                  "pm.test('Order is Pending for the calling customer', () => {",
+                  "    pm.expect(order.status).to.eql('Pending');",
+                  "    pm.expect(order.customerId).to.eql(pm.collectionVariables.get('customerId'));",
+                  "    pm.expect(order.completedOnUtc).to.be.null;",
+                  "});",
+                  "pm.test('Prices come from Catalog and SKUs are normalized', () => {",
+                  "    const lager = order.items.find(i => i.sku === 'GOLDEN-LAGER-350');",
+                  "    pm.expect(lager).to.include({ productName: 'Golden Lager 350ml', unitPrice: 12, quantity: 10, lineTotal: 120 });",
+                  "});",
+                  "pm.test('25 packs reach the 5% volume discount tier', () => {",
+                  "    pm.expect(order.subtotal).to.eql(534);",
+                  "    pm.expect(order.discount).to.eql(26.7);",
+                  "    pm.expect(order.total).to.eql(507.3);",
+                  "    pm.expect(order.currency).to.eql('USD');",
+                  "});",
+                  "pm.collectionVariables.set('orderId', order.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"golden-lager-350\", \"quantity\": 10 },\n    { \"sku\": \"AMBER-ALE-600\", \"quantity\": 15 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Only SKUs and quantities (packs) are sent; names and prices are snapshotted from Catalog. The order is saved as `Pending` together with an `OrderPlaced` outbox message, and becomes `Confirmed`/`Rejected` once Inventory answers (phase 5). Saves the id into `orderId`."
+          }
+        },
+        {
+          "name": "Place order - unknown SKU (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Names the SKU missing from the catalog', () => {",
+                  "    const problem = pm.response.json();",
+                  "    pm.expect(problem.code).to.eql('Orders.UnknownProducts');",
+                  "    pm.expect(problem.detail).to.include('GHOST-BEER-1');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"GOLDEN-LAGER-350\", \"quantity\": 1 },\n    { \"sku\": \"GHOST-BEER-1\", \"quantity\": 1 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Nothing is saved: the SKU check happens before the aggregate is created."
+          }
+        },
+        {
+          "name": "Place order - validation errors (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Reports every invalid field at once', () => {",
+                  "    const problem = pm.response.json();",
+                  "    pm.expect(problem.code).to.eql('Validation.Failed');",
+                  "    pm.expect(problem.errors).to.include.all.keys('Items[0].Sku', 'Items[0].Quantity', 'Items[1].Quantity');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"golden lager!\", \"quantity\": 0 },\n    { \"sku\": \"AMBER-ALE-600\", \"quantity\": 1001 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Validation runs in the application layer (`ValidationDecorator`), before Catalog is called. Quantity must be 1–1000 packs."
+          }
+        },
+        {
+          "name": "Place order - duplicate SKUs (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Rejects the same SKU twice, ignoring case', () => pm.expect(pm.response.json().errors).to.have.property('Items'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"sku\": \"GOLDEN-LAGER-350\", \"quantity\": 1 },\n    { \"sku\": \"golden-lager-350\", \"quantity\": 2 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Place order - no items (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Reports the Items field', () => pm.expect(pm.response.json().errors).to.have.property('Items'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" },
+              { "key": "X-Customer-Email", "value": "{{customerId}}@example.com" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": []\n}"
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Place order - malformed JSON (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400 (binding error, not 500)', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Customer-Id", "value": "{{customerId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"items\": [ { \"sku\": "
+            },
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders - queries",
+      "item": [
+        {
+          "name": "Get order by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const order = pm.response.json();",
+                  "pm.test('Returns the order placed by this run with its items', () => {",
+                  "    pm.expect(order.id).to.eql(pm.collectionVariables.get('orderId'));",
+                  "    pm.expect(order.items).to.have.lengthOf(2);",
+                  "    pm.expect(order.total).to.eql(507.3);",
+                  "});",
+                  "pm.test('Status is one of the order states', () => {",
+                  "    pm.expect(['Pending', 'Confirmed', 'Rejected']).to.include(order.status);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Customer-Id", "value": "{{customerId}}" }
+            ],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders", "{{orderId}}"]
+            },
+            "description": "Uses `orderId` saved by *Place order*. Poll this request to follow `Pending → Confirmed | Rejected` once Inventory exists (phase 5)."
+          }
+        },
+        {
+          "name": "Get order by id - another customer (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404 (existence is not revealed)', () => pm.response.to.have.status(404));",
+                  "pm.test('Carries the domain error code', () => pm.expect(pm.response.json().code).to.eql('Orders.NotFound'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Customer-Id", "value": "someone-else" }
+            ],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders/{{orderId}}",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders", "{{orderId}}"]
+            },
+            "description": "The order exists but belongs to another customer: the API answers 404, not 403."
+          }
+        },
+        {
+          "name": "Get order by id - not found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Carries the domain error code', () => pm.expect(pm.response.json().code).to.eql('Orders.NotFound'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Customer-Id", "value": "{{customerId}}" }
+            ],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders/00000000-0000-0000-0000-000000000001",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders", "00000000-0000-0000-0000-000000000001"]
+            }
+          }
+        },
+        {
+          "name": "List orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const orders = pm.response.json();",
+                  "pm.test('Only the calling customer\\'s orders, the placed one included', () => {",
+                  "    pm.expect(orders).to.have.lengthOf(1);",
+                  "    pm.expect(orders[0].id).to.eql(pm.collectionVariables.get('orderId'));",
+                  "});",
+                  "pm.test('Summary rows carry item count and total, not items', () => {",
+                  "    pm.expect(orders[0]).to.include({ itemCount: 2, total: 507.3, currency: 'USD' });",
+                  "    pm.expect(orders[0]).to.not.have.property('items');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Customer-Id", "value": "{{customerId}}" }
+            ],
+            "url": {
+              "raw": "{{orderingBaseUrl}}/api/orders",
+              "host": ["{{orderingBaseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "The customer's orders, most recent first (max 100)."
+          }
+        }
+      ]
+    }
+  ]
+}
