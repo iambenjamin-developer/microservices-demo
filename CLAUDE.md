@@ -13,6 +13,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 - **Commits:** Conventional Commits (`feat(ordering): ...`, `test: ...`, `docs: ...`), small and focused.
 - **Workflow:** implement one phase at a time (one session per phase); stop at the end of each phase for human review before committing. When a phase is approved, update its Status and Phase notes in `docs/implementation-plan.md` in the same commit.
 - **Catalog data is fictional.** Do not use real beer brands.
+- **Postman:** every service phase adds or updates `docs/postman/<service>.postman_collection.json` (requests with test scripts, happy and error paths), its base URL in `local.postman_environment.json` and the table in `docs/postman/README.md`.
 - **Secrets are never committed.** Use .NET user-secrets (Aspire) or a git-ignored `.env` (docker-compose).
 
 ## Build rules

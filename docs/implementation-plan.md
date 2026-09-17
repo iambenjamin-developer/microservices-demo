@@ -185,6 +185,7 @@ microservices-demo/
 │  └─ Architecture.Tests/
 ├─ docs/
 │  ├─ implementation-plan.md
+│  ├─ postman/                      One collection per service (with tests) + local environment
 │  ├─ job-requirements.md
 │  ├─ ai-workflow.md
 │  └─ adr/
