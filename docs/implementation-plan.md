@@ -263,6 +263,10 @@ Decisions and facts discovered during implementation that the next phases depend
   - Emulator AMQP port is fixed to `5672`; `tools/servicebus-smoke.cs` sends/peeks/receives against it.
   - Database resource names in the AppHost: `catalogdb`, `orderingdb`, `inventorydb`, `notificationsdb`.
   - `ServiceDefaults` adds `AddStandardResilienceHandler()` to every `HttpClient`; clients with a custom Polly pipeline must call `RemoveAllResilienceHandlers()` first.
+- **Configuration**
+  - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
+  - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
+  - Setting names are shared by both paths: `Jwt:*`, `DemoUsers:*`, `Email:*` (env var form `Jwt__SigningKey`, etc.).
 
 ### Working sessions
 
