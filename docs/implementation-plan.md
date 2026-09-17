@@ -131,6 +131,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` when `Email:Enabled = false` — no `if` checks spread through the code |
 | Result Pattern | `Result` / `Result<T>` + `Error`, mapped to RFC 9457 `ProblemDetails` |
+| Object Mapping (Mapster) | Ordering and Inventory: `IRegister` configs + `IMapper`, `ProjectToType<T>()` for EF reads. **Catalog maps by hand on purpose** (expression projection + `FromProduct`) to show both approaches side by side |
 | Options Pattern | `ServiceBusOptions`, `JwtOptions`, `DiscountOptions` |
 | Dependency Injection | Everywhere |
 | Test Data Builder | `OrderBuilder` in tests |
@@ -143,6 +144,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Local orchestration | .NET Aspire (AppHost + ServiceDefaults) |
 | APIs | ASP.NET Core Minimal APIs, OpenAPI + Scalar, ProblemDetails |
 | Validation | FluentValidation |
+| Mapping | Mapster (MIT) in runtime mode: `TypeAdapterConfig` in DI (`IMapper` via `Mapster.DependencyInjection`), one `IRegister` per area, `ProjectToType<T>()` for queries; the config is compiled in a test so broken mappings fail the build, not a request. Catalog stays manual as the reference |
 | Persistence | PostgreSQL, EF Core 10 (Npgsql), migrations |
 | Messaging | Azure Service Bus emulator, `Azure.Messaging.ServiceBus` SDK |
 | Serverless | Azure Functions v4, isolated worker |
@@ -245,8 +247,8 @@ push, and update the **Status** column and the phase notes below.
 | 1 | Aspire & building blocks | ✅ Done | AppHost (PostgreSQL, Service Bus emulator with topics/subscriptions), ServiceDefaults, `Result`, contracts, `IEventBus`, Outbox/Inbox + processor, Service Bus smoke test tool | `feat(building-blocks): ...`, `feat(apphost): ...`, `chore(tools): ...` |
 | 2 | Catalog | ✅ Done | Entity, EF configuration, migration, seed (fictional brands + "Duff-Style Classic Lager"), endpoints, validation, ProblemDetails mapping for `Result` | `feat(catalog): ...` |
 | 3 | Ordering domain | ⏳ Next | Aggregate, value objects, domain events, discount strategies + unit tests | `feat(ordering): add order aggregate`, `test(ordering): ...` |
-| 4 | Ordering application & API | ⬜ | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
-| 5 | Inventory & end-to-end flow | ⬜ | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
+| 4 | Ordering application & API | ⬜ | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, Mapster read mappings (aggregate → DTO only), integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
+| 5 | Inventory & end-to-end flow | ⬜ | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
 | 6 | Gateway & auth | ⬜ | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
 | 7 | Notifications | ⬜ | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
 | 8 | Web | ⬜ | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
@@ -295,6 +297,7 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 2. `0002-architecture-style-per-service.md` — Clean Architecture for Ordering, Vertical Slice for Catalog/Inventory.
 3. `0003-choreography-over-orchestration.md` — why choreography for a three-step flow, and when an orchestrated Saga would be preferred.
 4. `0004-yarp-as-api-gateway.md` — YARP (in-process .NET, code/config based) vs Kong or Azure API Management, and how it would evolve in production.
+5. `0005-object-mapping-mapster-and-manual.md` — Mapster (MIT, `ProjectToType` SQL projections) vs AutoMapper (commercial license) vs hand-written mapping; why Catalog stays manual and why mappings never create aggregates.
 
 ## 11. Demo script (5–10 minutes)
 
