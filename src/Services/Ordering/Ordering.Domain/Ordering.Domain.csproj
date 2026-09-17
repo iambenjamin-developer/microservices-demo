@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Innermost layer: no references to Application, Infrastructure, EF Core or ASP.NET Core.
+    BuildingBlocks.Common is the only dependency (a dependency-free shared kernel with Result/Error).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Common\BuildingBlocks.Common.csproj" />
+  </ItemGroup>
+
+</Project>

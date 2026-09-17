@@ -13,4 +13,7 @@
   <Folder Name="/src/Services/Catalog/">
     <Project Path="src/Services/Catalog/Catalog.Api/Catalog.Api.csproj" />
   </Folder>
+  <Folder Name="/src/Services/Ordering/">
+    <Project Path="src/Services/Ordering/Ordering.Domain/Ordering.Domain.csproj" />
+  </Folder>
 </Solution>
