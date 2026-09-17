@@ -17,6 +17,7 @@ public sealed class ProxyAuthorizationTests(GatewayFactory factory)
     [InlineData("/api/products")]
     [InlineData("/api/orders")]
     [InlineData("/api/stock")]
+    [InlineData("/api/notifications")]
     public async Task ProxiedRoute_WithoutToken_Returns401(string path)
     {
         using var client = factory.CreateClient();
@@ -44,9 +45,24 @@ public sealed class ProxyAuthorizationTests(GatewayFactory factory)
     {
         using var client = await SignInAsync("admin");
 
-        var response = await client.GetAsync("/api/notifications", TestContext.Current.CancellationToken);
+        var response = await client.GetAsync("/api/invoices", TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task NotificationsRoute_WithAWriteMethod_IsNotProxied()
+    {
+        // The notifications panel is read-only. The route only matches GET, so the Gateway answers 405
+        // itself and the Function is never called: what a service does not expose is not proxied.
+        using var client = await SignInAsync("bar");
+
+        var response = await client.PostAsJsonAsync(
+            "/api/notifications",
+            new { },
+            TestContext.Current.CancellationToken);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]

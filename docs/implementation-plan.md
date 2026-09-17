@@ -186,6 +186,7 @@ microservices-demo/
 │  ├─ Ordering.Domain.UnitTests/
 │  ├─ Ordering.Application.UnitTests/
 │  ├─ Inventory.UnitTests/
+│  ├─ Notifications.UnitTests/
 │  ├─ Ordering.IntegrationTests/
 │  ├─ Gateway.Tests/
 │  └─ Architecture.Tests/
@@ -218,6 +219,7 @@ Email settings:
 | `Email__Port` | `1025` (Mailpit) | `587` (STARTTLS) for Gmail |
 | `Email__Username` / `Email__Password` | empty | Gmail address + **App Password** (requires 2FA) |
 | `Email__From` | `no-reply@microservices-demo.local` | Sender address |
+| `Email__FromDisplayName` | `Beer Ordering Demo` | Display name shown next to the sender address |
 | `DemoUsers__bar__Email` | `bar@example.com` | The e-mail claim of the `bar` account, and therefore the recipient of its order e-mails; set to a real inbox to receive them |
 
 By default emails are captured by **Mailpit** (web UI on `http://localhost:8025`), so the project runs
@@ -230,6 +232,7 @@ for anyone who clones it without credentials.
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
 | Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, strict Mapster config compile |
 | Unit | `Inventory.UnitTests` | All-or-nothing reservation rules |
+| Unit | `Notifications.UnitTests` | Notification text built from an order outcome, e-mail status transitions, Null Object vs SMTP sender chosen by configuration |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
 | Functional | `Gateway.Tests` | The real Gateway in memory (`WebApplicationFactory`, no backend): token issuing and its failure modes, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused |
 | Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; endpoints do not use Infrastructure |
@@ -259,8 +262,8 @@ push, and update the **Status** column and the phase notes below.
 | 4 | Ordering application & API | ✅ Done | Commands/queries, decorators, repository, EF, outbox, Catalog client with Polly pipeline, consumers, Mapster read mappings (aggregate → DTO only), integration test, architecture tests | `feat(ordering): ...`, `test: ...` |
 | 5 | Inventory & end-to-end flow | ✅ Done | Stock model, reservation consumer (inbox + outbox, optimistic concurrency), endpoints with Mapster projections, unit tests; full flow verified in Aspire | `feat(inventory): ...` |
 | 6 | Gateway & auth | ✅ Done | YARP routes, `/auth/token`, JWT validation in gateway and services, CORS | `feat(gateway): ...` |
-| 7 | Notifications | ⏳ Next | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
-| 8 | Web | ⬜ | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
+| 7 | Notifications | ✅ Done | Function with Service Bus trigger, idempotent storage, email sender (Mailpit/Gmail, toggleable), HTTP trigger for the panel | `feat(notifications): ...` |
+| 8 | Web | ⏳ Next | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
 | 9 | Containers & CI | ⬜ | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
 | 10 | Documentation | ⬜ | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
 
@@ -328,6 +331,21 @@ Decisions and facts discovered during implementation that the next phases depend
   - **Ordering identity now comes from the token:** `CurrentCustomer` binds `sub`/`email` (the `X-Customer-*` headers and `DemoCustomerOptions` are gone) and throws `BadHttpRequestException(401)` for a token that validates but identifies nobody.
   - **Service-to-service calls relay the caller's token** (`IAccessTokenProvider` port in `Ordering.Application`, `HttpContextAccessTokenProvider` in `Ordering.Api`, `AccessTokenPropagationHandler` in `Ordering.Infrastructure`, outside the Polly pipeline). The port keeps ASP.NET Core out of the inner layers. Client credentials for machine-to-machine calls is the natural next step; here Ordering genuinely acts *on behalf of* the point of sale. A 401/403 from Catalog is logged apart from a transient fault so a bad key is not mistaken for an outage.
   - Tests: `Gateway.Tests` (new, 12 — token issuing, bad credentials, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused) and `Ordering.IntegrationTests` (+4 authentication tests, `TestTokens` signs them without involving the Gateway). Verified live in Aspire end to end through the Gateway: sign in → place order → `Confirmed` with stock moved, `market` gets 404 for `bar`'s order, `PointOfSale` gets 403 on `PUT /api/stock`, `/auth/token` answers 429 after 10 calls. All four Postman collections pass with newman (145 assertions).
+- **Phase 7**
+  - One project, `src/Functions/Notifications` (`Notifications.csproj`), Aspire resource **`notifications`** (`http://localhost:5104`); it references `notificationsdb` and `messaging`. **.NET 10 isolated worker works** (Worker 2.52, Core Tools 4.14, Functions runtime 4.1052) — the .NET 8 fallback in the risk table was not needed.
+  - Two triggers: a **Service Bus trigger** on `order-events/notifications` (`OrderConfirmed`, `OrderRejected`) and an **HTTP trigger** `GET /api/notifications`. The Functions host maps HTTP triggers under the `api` prefix, so the route matches the other services without a rewrite.
+  - The Functions host owns the receive loop, so Notifications does **not** call `AddServiceBusMessaging()` and has no `IEventBus` and no outbox: it is the end of the choreography. What it reuses from the building blocks is what crosses the boundary anyway — `BuildingBlocks.Contracts`, `IntegrationEventSerializer` (made **public** for this) and the inbox table. `AddMessagingTables()` was split into `AddOutboxTable()` / `AddInboxTable()` so a pure consumer does not get an unused table.
+  - **Idempotency is written out by hand** because the shared consumer pipeline is not in play: notification + `InboxMessage(MessageId, "notifications")` are saved in one `SaveChangesAsync`, a unique violation is treated as a concurrent redelivery, and an unknown `Subject` is logged and completed. `host.json` keeps `autoCompleteMessages`, so throwing abandons the message and the subscription's max delivery count dead-letters it. Verified: the same `OrderConfirmed` sent twice with one `MessageId` produced one notification row and one e-mail.
+  - **The e-mail is sent after the commit, never inside it.** An SMTP send cannot be rolled back, so the notification is the source of truth and the e-mail is a best-effort second channel whose outcome is stored on the row (`EmailStatus`: `Pending` → `Skipped` / `Sent` / `Failed`). A delivery failure is logged, not rethrown: retrying would hit the inbox row and skip, so throwing would only dead-letter an outcome that was recorded correctly.
+  - `IEmailSender` returns an `EmailDelivery` instead of `Task`. The Null Object (`NoOpEmailSender`, registered when `Email:Enabled=false`) is allowed to do nothing, but it is not allowed to let the panel claim an e-mail was sent.
+  - **Mailpit** (`axllent/mailpit`, container `msdemo-mailpit`) is started by the AppHost: SMTP on `1025`, inbox UI on **`http://localhost:8025`**. The AppHost injects `Email__Host` / `Email__Port` from its endpoint. Gmail needs only `Email__Host=smtp.gmail.com`, `Email__Port=587`, `Email__UseStartTls=true` and an App Password.
+  - The Functions runtime needs a storage account for its own bookkeeping: AppHost resource `functions-storage` running Azurite (`msdemo-azurite`), attached with `WithHostStorage(...)`. It is infrastructure for the host, not application data.
+  - **Authentication is a worker middleware.** There is no `UseAuthentication` in the Functions pipeline, so `JwtAuthenticationMiddleware` calls the same `JwtBearer` handler `AddJwtAuthentication()` registers, fails closed for every HTTP trigger (there is an explicit allow-list, empty today) and lets non-HTTP triggers through — the broker is not a user. A 401 is the usual RFC 9457 body (`Notifications.Unauthenticated`).
+  - `GET /api/notifications` is scoped to the `sub` claim in the query itself (newest first, max 100): there is no endpoint that takes a customer id, so one point of sale cannot ask for another one's panel. Mapping is **by hand** (`NotificationResponse` built in the `Select`), like Catalog; enums are serialized as strings.
+  - Persistence: tables `notifications`, `inbox_messages`; `type` and `email_status` are stored as text (adding a value later must not renumber old rows) and the index is `(customer_id, created_on_utc DESC)`, which is exactly the panel's query. Migrations: `dotnet ef migrations add <Name> --project src/Functions/Notifications --output-dir Persistence/Migrations`.
+  - Gateway: cluster `notifications` (destination `http://notifications` — the Functions host serves plain HTTP locally) and route `notifications`, policy `default`, **GET only**, so a write method is refused by the Gateway with 405 and never reaches the Function.
+  - `local.settings.json` is git-ignored and not needed: Aspire supplies `FUNCTIONS_WORKER_RUNTIME`, the storage connection and every setting. Running `func start` by hand does need one.
+  - Tests: `Notifications.UnitTests` (new, 15) and `Gateway.Tests` (+1; `/api/notifications` used to be the "unknown route" example and is now a real route). Verified live in Aspire end to end: order within stock → notification `OrderConfirmed` and an e-mail in Mailpit ~3 s after placing it; order over stock → `OrderRejected` with the reason and the SKU; `market` sees an empty panel while `bar` sees its own; messages that had been waiting on the `notifications` subscription since earlier phases were drained on first start (nothing was lost while there was no consumer). All five Postman collections pass with newman (176 assertions).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.

@@ -23,10 +23,14 @@
     <Project Path="src/Services/Ordering/Ordering.Domain/Ordering.Domain.csproj" />
     <Project Path="src/Services/Ordering/Ordering.Infrastructure/Ordering.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Functions/">
+    <Project Path="src/Functions/Notifications/Notifications.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Architecture.Tests/Architecture.Tests.csproj" />
     <Project Path="tests/Gateway.Tests/Gateway.Tests.csproj" />
     <Project Path="tests/Inventory.UnitTests/Inventory.UnitTests.csproj" />
+    <Project Path="tests/Notifications.UnitTests/Notifications.UnitTests.csproj" />
     <Project Path="tests/Ordering.Application.UnitTests/Ordering.Application.UnitTests.csproj" />
     <Project Path="tests/Ordering.Domain.UnitTests/Ordering.Domain.UnitTests.csproj" />
     <Project Path="tests/Ordering.IntegrationTests/Ordering.IntegrationTests.csproj" />

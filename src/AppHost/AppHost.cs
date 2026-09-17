@@ -21,7 +21,7 @@ var postgres = builder.AddPostgres("postgres")
 var catalogDb = postgres.AddDatabase("catalogdb");
 var orderingDb = postgres.AddDatabase("orderingdb");
 var inventoryDb = postgres.AddDatabase("inventorydb");
-postgres.AddDatabase("notificationsdb");
+var notificationsDb = postgres.AddDatabase("notificationsdb");
 
 // Azure Service Bus emulator. Topics, subscriptions and filters come from the shared Topology,
 // so the infrastructure and the code can never disagree about names.
@@ -64,6 +64,25 @@ foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s =>
     }
 }
 
+// Mail catcher: Mailpit speaks real SMTP and shows every message it receives in a web UI, so the demo can show
+// an e-mail leaving the system without anybody owning a mail account. Swapping Email:Host/Port for Gmail is enough
+// to deliver for real (see .env.example).
+var mailpit = builder.AddContainer("mailpit", "axllent/mailpit", "v1.31")
+    .WithContainerName($"{ContainerPrefix}mailpit")
+    .WithLifetime(ContainerLifetime.Persistent)
+    .WithEndpoint(name: "smtp", port: 1025, targetPort: 1025)
+    .WithHttpEndpoint(name: "ui", port: 8025, targetPort: 8025)
+    .WithUrlForEndpoint("ui", url => url.DisplayText = "Inbox");
+
+var mailpitSmtp = mailpit.GetEndpoint("smtp");
+
+// The Azure Functions runtime keeps its own bookkeeping (host id lease, trigger state) in a storage account.
+// Azurite emulates it locally; it is infrastructure for the Functions host, not application data.
+var functionsStorage = builder.AddAzureStorage("functions-storage")
+    .RunAsEmulator(emulator => emulator
+        .WithContainerName($"{ContainerPrefix}azurite")
+        .WithLifetime(ContainerLifetime.Persistent));
+
 // The Gateway signs access tokens and every service validates them, so all of them need the same key.
 // It is generated on first run and persisted to the AppHost user-secrets: a real secret, never committed.
 var jwtSigningKey = builder.AddParameter(
@@ -96,11 +115,25 @@ var inventory = builder.AddProject<Projects.Inventory_Api>("inventory")
     .WaitFor(serviceBus)
     .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
 
+// Notifications is an Azure Function (isolated worker): a Service Bus trigger records the order outcome and
+// e-mails it, and an HTTP trigger serves the panel. It is the end of the choreography — it publishes nothing.
+var notifications = builder.AddAzureFunctionsProject<Projects.Notifications>("notifications")
+    .WithHostStorage(functionsStorage)
+    .WithReference(notificationsDb)
+    .WaitFor(notificationsDb)
+    .WithReference(serviceBus)
+    .WaitFor(serviceBus)
+    .WaitFor(mailpit)
+    .WithEnvironment("Email__Host", mailpitSmtp.Property(EndpointProperty.Host))
+    .WithEnvironment("Email__Port", mailpitSmtp.Property(EndpointProperty.Port))
+    .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
+
 // Single entry point for every client: it issues the demo tokens and proxies /api/* to the services.
 builder.AddProject<Projects.Gateway>("gateway")
     .WithReference(catalog)
     .WithReference(ordering)
     .WithReference(inventory)
+    .WithReference(notifications)
     .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey)
     .WithExternalHttpEndpoints();
 

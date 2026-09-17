@@ -10,8 +10,14 @@ public static class MessagingModelBuilderExtensions
     public const string InboxTable = "inbox_messages";
 
     /// <summary>Adds the outbox and inbox tables to a service's own database (database per service).</summary>
-    public static ModelBuilder AddMessagingTables(this ModelBuilder modelBuilder)
+    public static ModelBuilder AddMessagingTables(this ModelBuilder modelBuilder) =>
+        modelBuilder.AddOutboxTable().AddInboxTable();
+
+    /// <summary>Only for services that publish events; a pure consumer does not need the table.</summary>
+    public static ModelBuilder AddOutboxTable(this ModelBuilder modelBuilder)
     {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
         modelBuilder.Entity<OutboxMessage>(outbox =>
         {
             outbox.ToTable(OutboxTable);
@@ -32,6 +38,14 @@ public static class MessagingModelBuilderExtensions
                 .HasDatabaseName("ix_outbox_messages_pending")
                 .HasFilter("processed_on_utc IS NULL");
         });
+
+        return modelBuilder;
+    }
+
+    /// <summary>The idempotency key of every consumer: one row per message and consumer.</summary>
+    public static ModelBuilder AddInboxTable(this ModelBuilder modelBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
 
         modelBuilder.Entity<InboxMessage>(inbox =>
         {

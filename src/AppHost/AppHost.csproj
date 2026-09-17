@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
     <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+    <PackageReference Include="Aspire.Hosting.Azure.Storage" />
+    <PackageReference Include="Aspire.Hosting.Azure.Functions" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,6 +19,7 @@
     <ProjectReference Include="..\Services\Catalog\Catalog.Api\Catalog.Api.csproj" />
     <ProjectReference Include="..\Services\Inventory\Inventory.Api\Inventory.Api.csproj" />
     <ProjectReference Include="..\Services\Ordering\Ordering.Api\Ordering.Api.csproj" />
+    <ProjectReference Include="..\Functions\Notifications\Notifications.csproj" />
   </ItemGroup>
 
 </Project>

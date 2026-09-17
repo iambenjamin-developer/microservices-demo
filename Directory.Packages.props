@@ -8,6 +8,8 @@
 
   <!-- Aspire -->
   <ItemGroup>
+    <PackageVersion Include="Aspire.Hosting.Azure.Functions" Version="13.5.4" />
+    <PackageVersion Include="Aspire.Hosting.Azure.Storage" Version="13.5.4" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.5.4" />
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.5.4" />
     <PackageVersion Include="Aspire.Azure.Messaging.ServiceBus" Version="13.5.4" />
@@ -37,6 +39,15 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.4" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+  </ItemGroup>
+
+  <!-- Notifications: Azure Functions isolated worker and SMTP -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.1.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.1" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.24.0" />
+    <PackageVersion Include="MailKit" Version="4.18.0" />
   </ItemGroup>
 
   <!-- Gateway and authentication -->

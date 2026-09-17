@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "Notifications": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 5104",
+      "launchBrowser": false
+    }
+  }
+}

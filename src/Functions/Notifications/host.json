@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "extensions": {
+    "serviceBus": {
+      "autoCompleteMessages": true,
+      "maxConcurrentCalls": 4,
+      "maxAutoLockRenewalDuration": "00:05:00"
+    }
+  }
+}
