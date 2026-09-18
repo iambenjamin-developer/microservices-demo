@@ -8,3 +8,7 @@
 *.png   binary
 *.jpg   binary
 *.ico   binary
+
+# Files consumed by Linux containers must keep LF endings.
+Dockerfile   text eol=lf
+*.conf       text eol=lf

@@ -1,0 +1,26 @@
+# Everything the build context does not need. Keeping build output out is not only about size:
+# a copied obj/ folder carries absolute paths and a project.assets.json from the host machine,
+# which makes the restore inside the image disagree with the one outside it.
+
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/TestResults/
+**/.vs/
+.git/
+.github/
+.idea/
+.vscode/
+artifacts/
+docs/
+tests/
+tools/
+src/AppHost/
+**/*.user
+**/local.settings.json
+.env
+.env.*
+!.env.example
+README*.md
+CLAUDE.md

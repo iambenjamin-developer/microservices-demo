@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch makes the previous run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          # The same SDK the repository pins, so a green CI means the local build is green too.
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore microservices-demo.slnx
+
+      # Directory.Build.props turns warnings into errors and enforces the .editorconfig style rules,
+      # so a formatting slip fails here rather than in review.
+      - name: Build
+        run: dotnet build microservices-demo.slnx --configuration Release --no-restore
+
+      # Fast feedback first: everything that needs no infrastructure.
+      - name: Unit, architecture and functional tests
+        run: |
+          for project in \
+            tests/Ordering.Domain.UnitTests \
+            tests/Ordering.Application.UnitTests \
+            tests/Inventory.UnitTests \
+            tests/Notifications.UnitTests \
+            tests/Architecture.Tests \
+            tests/Gateway.Tests
+          do
+            dotnet test "$project" --configuration Release --no-build \
+              --logger "trx;LogFileName=$(basename "$project").trx" \
+              --results-directory "$GITHUB_WORKSPACE/TestResults"
+          done
+
+      # Testcontainers starts a real PostgreSQL; the Ubuntu runner has a Docker daemon available.
+      - name: Integration tests
+        run: |
+          dotnet test tests/Ordering.IntegrationTests --configuration Release --no-build \
+            --logger "trx;LogFileName=Ordering.IntegrationTests.trx" \
+            --results-directory "$GITHUB_WORKSPACE/TestResults"
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: error
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/Web/package-lock.json
+
+      - name: Install
+        run: npm --prefix src/Web ci
+
+      - name: Lint
+        run: npm --prefix src/Web run lint
+
+      # tsc runs as part of the build script, so a type error fails the job.
+      - name: Build
+        run: npm --prefix src/Web run build
+
+  docker:
+    name: Image (${{ matrix.image }})
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: catalog, dockerfile: src/Services/Catalog/Catalog.Api/Dockerfile }
+          - { image: ordering, dockerfile: src/Services/Ordering/Ordering.Api/Dockerfile }
+          - { image: inventory, dockerfile: src/Services/Inventory/Inventory.Api/Dockerfile }
+          - { image: notifications, dockerfile: src/Functions/Notifications/Dockerfile }
+          - { image: gateway, dockerfile: src/Gateway/Dockerfile }
+          - { image: web, dockerfile: src/Web/Dockerfile }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, not pushed: there is no registry for this demo. The point is that every Dockerfile
+      # still compiles the current commit.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: microservices-demo/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

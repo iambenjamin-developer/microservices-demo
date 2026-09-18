@@ -129,12 +129,26 @@ var notifications = builder.AddAzureFunctionsProject<Projects.Notifications>("no
     .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey);
 
 // Single entry point for every client: it issues the demo tokens and proxies /api/* to the services.
-builder.AddProject<Projects.Gateway>("gateway")
+var gateway = builder.AddProject<Projects.Gateway>("gateway")
     .WithReference(catalog)
     .WithReference(ordering)
     .WithReference(inventory)
     .WithReference(notifications)
     .WithEnvironment(JwtSigningKeyVariable, jwtSigningKey)
+    .WithExternalHttpEndpoints();
+
+// The React app. Everything it needs is behind the Gateway, so that is the only address it is given:
+// a browser cannot use service discovery, and Vite only exposes variables prefixed with VITE_.
+// The dev server port is fixed because the Gateway allows a fixed list of CORS origins.
+builder.AddViteApp("web", "../Web")
+    .WithNpm()
+    .WithEnvironment("VITE_GATEWAY_URL", gateway.GetEndpoint("http"))
+    .WithEndpoint("http", endpoint =>
+    {
+        endpoint.Port = 5173;
+        endpoint.TargetPort = 5173;
+        endpoint.IsProxied = false;
+    })
     .WithExternalHttpEndpoints();
 
 builder.Build().Run();

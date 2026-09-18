@@ -14,6 +14,10 @@ Each request has test scripts, so a collection doubles as a quick smoke test.
 [local.postman_environment.json](local.postman_environment.json) holds the base URL of every service when running
 through Aspire. Collections also define their base URL as a collection variable, so they work without the environment.
 
+`docker compose up` publishes the same ports, so the same environment works against the containers. The one
+difference: the services run in `Production` there, where the OpenAPI document is not mapped, so the
+**Operations / OpenAPI document** requests are expected to fail against docker-compose.
+
 ## Authentication
 
 Every endpoint requires a JWT. Only the Gateway issues one, so every collection starts with a **Sign in** folder

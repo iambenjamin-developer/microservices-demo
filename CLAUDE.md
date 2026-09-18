@@ -35,6 +35,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 - Application code returns `Result`/`Result<T>` instead of throwing for expected failures; APIs map errors to RFC 9457 `ProblemDetails`.
 - **Auth:** only the Gateway issues JWTs (`POST /auth/token`); every service validates them itself through `AddJwtAuthentication()` from `BuildingBlocks.Web`. Endpoints are authenticated by default (fallback policy) — mark public ones `AllowAnonymous` and back-office ones `RequireAdmin()`. Caller identity comes from the `sub`/`email` claims, never from a header or a request body.
 - **Mapping:** Ordering and Inventory use **Mapster** (runtime mode, `IMapper` from DI, one `IRegister` per area, `ProjectToType<T>()` for EF queries). Mappings only go entity/aggregate → DTO; aggregates are always created through their factory methods. **Catalog and Notifications map by hand on purpose** — do not add Mapster to them.
+- **Web** (`src/Web`, React + Vite + TypeScript, plain CSS) talks **only to the Gateway** and holds no business rules: totals, discounts and authorization come from the services, and the order status is followed by polling until it is terminal. Keep the dev server on port 5173 — it is in the Gateway's CORS allow-list.
 
 ## Commands
 
@@ -42,6 +43,14 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 dotnet build microservices-demo.slnx
 dotnet test microservices-demo.slnx
 dotnet run --project src/AppHost
+```
+
+Frontend (`src/Web`, also started by the AppHost):
+
+```bash
+npm --prefix src/Web install
+npm --prefix src/Web run lint
+npm --prefix src/Web run build
 ```
 
 ## Testing
