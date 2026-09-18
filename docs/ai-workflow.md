@@ -1,0 +1,100 @@
+# AI-assisted development workflow
+
+This project was built with an AI coding assistant (**Claude Code**) in about two days. This document explains how
+the work was organized so that speed did not cost control: what the assistant did, what stayed with the human, and
+the guardrails that made the output reviewable.
+
+The short version: **the plan and the decisions are human, the assistant implements one reviewed phase at a time,
+and nothing is trusted until it is built, tested and run.**
+
+## 1. Plan first, in the repository
+
+Before any code, the whole project was written down in [`implementation-plan.md`](implementation-plan.md): goals and
+non-goals, business flow, architecture, the patterns and where each one goes, tech stack, testing strategy, CI,
+risks, and a list of **phases** with their deliverables and suggested commits.
+
+The plan is the contract with the assistant. It turns "build a microservices system" into small, checkable pieces,
+and it is where decisions are changed deliberately — e.g. `docs: use explicit polly pipelines and track phase status
+in the plan` and `docs: adopt mapster for ordering and inventory, keep catalog mapping manual` are plan changes made
+**before** the code that depends on them.
+
+## 2. Conventions written for the assistant
+
+[`CLAUDE.md`](../CLAUDE.md) is loaded by the assistant at the start of every session. It holds the rules that should
+never need repeating:
+
+- language (English for code and docs), Conventional Commits, one phase per session, **stop for review before
+  committing**;
+- build rules (Central Package Management, warnings as errors, `.editorconfig`);
+- architecture rules (database per service, outbox only, idempotent consumers, Clean Architecture in Ordering,
+  vertical slices elsewhere, `Result` instead of exceptions, who issues and who validates tokens, where Mapster is
+  allowed and where it is not);
+- testing rules (naming, Testcontainers, never mock the database).
+
+Rules that the compiler or a test can check are **also** enforced mechanically — code style fails the build,
+architecture tests fail on a wrong dependency, strict Mapster configs fail on an unmapped member — so the assistant
+cannot drift from them silently, and neither can a human.
+
+## 3. One session per phase, the repository as memory
+
+Each phase (0–10) was a separate session with the same kick-off prompt:
+
+> *Read CLAUDE.md and docs/implementation-plan.md. Implement phase N only. Stop for review before committing.*
+
+Nothing depends on a previous chat. What a later phase needs to know is written into the **phase notes** of the plan
+when a phase is approved: resource names, ports, conventions introduced, trade-offs taken, and anything discovered the
+hard way. Small sessions keep the context focused, and the notes make the project resumable by a person or by a new
+session.
+
+## 4. The review loop
+
+At the end of each phase the assistant stops and explains what it built and why. The human then:
+
+1. reads the diff (and asks for changes — the conversation is a code review);
+2. checks that the build is clean and the tests pass;
+3. runs the system and verifies the behavior live (Aspire dashboard, the web app, Postman/newman collections, Mailpit);
+4. approves; only then the assistant commits, with the plan's status and phase notes updated **in the same commit**.
+
+Commits stay small and meaningful (`feat(ordering): add order aggregate, value objects and discount policies`,
+`test(ordering): add domain unit tests with order builder`, …), so the history reads as the story of the project.
+
+## 5. Verify, don't trust
+
+The assistant's statements were treated as claims to check. Running things end to end found problems that reading
+the code would not have — all of them are recorded in the phase notes:
+
+- Aspire's Npgsql retry strategy rejects user-started transactions, so the outbox processor had to run its
+  transaction inside `CreateExecutionStrategy()` (phase 4).
+- React runs effects twice in development, which let an empty cart overwrite the stored one; the reducer now carries
+  the storage key it was restored from (phase 8).
+- In docker-compose, a service discovery value without a scheme made `https+http://catalog` resolve to HTTPS and fail
+  the TLS handshake against a plain-HTTP port (phase 9).
+- A host `obj/project.assets.json` copied into an image carried Windows paths and broke the restore, which is why
+  `.dockerignore` excludes `bin/` and `obj/` for correctness, not size (phase 9).
+- PostgreSQL 18 images refuse to start with the volume mounted at the old `/data` path (phase 9).
+
+Idempotency, resilience and security were checked by **making them happen**: the same message sent twice with one
+`MessageId` (one row, one e-mail), Catalog stopped mid-demo (retries, then the circuit opens and calls fail fast),
+a `PointOfSale` token on an admin route (403), a token signed with another key (401), eleven sign-ins in a minute (429).
+
+## 6. What stayed with the human
+
+- Scope, the non-goals and the cut list.
+- Architecture and technology choices, recorded as [ADRs](adr): hand-written outbox/inbox instead of a framework,
+  a style per service, choreography, YARP, Mapster vs manual mapping.
+- Security posture: validating the token in every service, demo credentials vs real secrets, what never gets
+  committed.
+- Accepting or rejecting every change, and every commit.
+
+The assistant was used for what it is fast and good at: turning a precise plan into consistent code across many
+files, writing the tests alongside it, keeping documentation in sync, and explaining its own reasoning so it could be
+challenged.
+
+## 7. Lessons
+
+- **Precise inputs, precise outputs.** The quality of a phase tracked the quality of its description in the plan.
+- **Guardrails beat reminders.** A rule in `CLAUDE.md` is guidance; the same rule as a failing test is a guarantee.
+- **Small batches.** A phase is small enough to review properly; a whole system at once is not.
+- **Write down what you learn.** Phase notes turned surprises into facts the next session starts with.
+- **The human owns the result.** Every line was reviewed as if a colleague had written it; the name on the commit is
+  the one answering for it in an interview or an incident.
