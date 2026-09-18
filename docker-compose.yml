@@ -1,0 +1,228 @@
+# =====================================================================================
+# The whole system without Aspire: same code, same settings, one command.
+#
+#   cp .env.example .env   (fill in the REQUIRED values)
+#   docker compose up --build
+#
+# Aspire and this file are two ways of running the same system, not two systems. What the AppHost
+# does at run time (create the databases, provision the Service Bus topology, inject connection
+# strings and service discovery addresses) is written down here instead.
+#
+# Run one or the other: they publish the same host ports (5100-5104, 1025, 8025, 5672).
+# =====================================================================================
+
+name: microservices-demo
+
+# ---- Shared settings -----------------------------------------------------------------
+# The emulator only accepts this fixed development key; UseDevelopmentEmulator=true tells the
+# Service Bus SDK to speak plain AMQP to port 5672 instead of looking for a real namespace.
+x-servicebus-connection: &servicebus-connection
+  Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+
+x-service-environment: &service-environment
+  # The Gateway signs the access tokens and every service validates them, so all of them need the
+  # same key. Under Aspire it is generated into the AppHost user-secrets; here it comes from .env.
+  Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env (at least 32 characters)}
+  # Traces, metrics and logs go to the standalone Aspire dashboard, as they do under Aspire.
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+  # Outside Development the probes are opt-in (see ServiceDefaults): /health says the service is
+  # ready to take traffic, /alive that the process is still responsive.
+  HealthChecks__Expose: "true"
+
+services:
+  # ---- Infrastructure ----------------------------------------------------------------
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      # PostgreSQL 18 images expect a single mount at /var/lib/postgresql and put the cluster in a
+      # major-version subdirectory of it, so that pg_upgrade can run across a mount boundary.
+      - postgres-data:/var/lib/postgresql
+      # Runs once, when the volume is empty: one database per service (database-per-service).
+      - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The Service Bus emulator keeps its state in a SQL Server sidecar and waits for it on its own
+  # (SQL_WAIT_INTERVAL), which is why there is no health gate between the two.
+  servicebus-sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:?set SERVICEBUS_SQL_PASSWORD in .env}
+
+  servicebus:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.0
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: servicebus-sql
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:?set SERVICEBUS_SQL_PASSWORD in .env}
+    volumes:
+      # Topics, subscriptions and correlation rules. The AppHost provisions the same topology from
+      # BuildingBlocks.Contracts/Topology.cs; this file has to be kept in step with it by hand.
+      - ./docker/servicebus/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "5672:5672"
+    depends_on:
+      - servicebus-sql
+
+  # Catches every e-mail the Notifications function sends; read them at http://localhost:8025.
+  mailpit:
+    image: axllent/mailpit:v1.31
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # The Azure Functions host keeps its own bookkeeping (host id lease, trigger state) in a storage
+  # account. Azurite emulates it: infrastructure for the host, not application data.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+
+  # Standalone Aspire dashboard: the OTLP endpoint the services export to, and the UI that shows an
+  # order as one distributed trace across Gateway, Ordering, the bus, Inventory and Notifications.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.5.2
+    environment:
+      # Demo only: the dashboard would otherwise print a login token on first start.
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+    ports:
+      - "18888:18888"
+
+  # ---- Services ----------------------------------------------------------------------
+  # Every service listens on 8080 inside the network. The published ports match the Aspire launch
+  # profiles, so docs/postman/local.postman_environment.json works against either way of running.
+  #
+  # The services do expose /health and /alive here (HealthChecks__Expose above), but there is no
+  # compose "healthcheck:" on them: Docker runs that command *inside* the container, and the .NET
+  # runtime images carry no curl — installing one only to call ourselves is worse than not having
+  # the gate. A real platform (Kubernetes) probes the endpoint over the network and needs nothing
+  # in the image. What stands in for it here is "restart: unless-stopped": a service that starts
+  # before the broker is ready fails fast and is restarted until it is.
+  catalog:
+    build:
+      context: .
+      dockerfile: src/Services/Catalog/Catalog.Api/Dockerfile
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: catalog
+      ConnectionStrings__catalogdb: Host=postgres;Port=5432;Database=catalogdb;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+    ports:
+      - "5101:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ordering:
+    build:
+      context: .
+      dockerfile: src/Services/Ordering/Ordering.Api/Dockerfile
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: ordering
+      ConnectionStrings__orderingdb: Host=postgres;Port=5432;Database=orderingdb;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__messaging: *servicebus-connection
+      # Service discovery without Aspire: the same Services:<name>:<scheme>:<index> configuration
+      # the AppHost injects, so the address in appsettings (https+http://catalog) still resolves.
+      Services__catalog__http__0: http://catalog:8080
+    ports:
+      - "5102:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      servicebus:
+        condition: service_started
+    restart: unless-stopped
+
+  inventory:
+    build:
+      context: .
+      dockerfile: src/Services/Inventory/Inventory.Api/Dockerfile
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: inventory
+      ConnectionStrings__inventorydb: Host=postgres;Port=5432;Database=inventorydb;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__messaging: *servicebus-connection
+    ports:
+      - "5103:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      servicebus:
+        condition: service_started
+    restart: unless-stopped
+
+  notifications:
+    build:
+      context: .
+      dockerfile: src/Functions/Notifications/Dockerfile
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: notifications
+      ConnectionStrings__notificationsdb: Host=postgres;Port=5432;Database=notificationsdb;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__messaging: *servicebus-connection
+      AzureWebJobsStorage: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;
+      # Mailpit by default. Point these at smtp.gmail.com:587 from .env to deliver for real.
+      Email__Enabled: ${EMAIL_ENABLED:-true}
+      Email__Host: ${EMAIL_HOST:-mailpit}
+      Email__Port: ${EMAIL_PORT:-1025}
+      Email__UseStartTls: ${EMAIL_USE_STARTTLS:-false}
+      Email__Username: ${EMAIL_USERNAME:-}
+      Email__Password: ${EMAIL_PASSWORD:-}
+      Email__From: ${EMAIL_FROM:-no-reply@microservices-demo.local}
+    ports:
+      - "5104:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      servicebus:
+        condition: service_started
+      azurite:
+        condition: service_started
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/Gateway/Dockerfile
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: gateway
+      # YARP destinations are service discovery names, resolved from this configuration.
+      Services__catalog__http__0: http://catalog:8080
+      Services__ordering__http__0: http://ordering:8080
+      Services__inventory__http__0: http://inventory:8080
+      Services__notifications__http__0: http://notifications:8080
+    ports:
+      - "5100:8080"
+    depends_on:
+      - catalog
+      - ordering
+      - inventory
+      - notifications
+    restart: unless-stopped
+
+  # Static files served by nginx. The Gateway address is baked in at build time because it is the
+  # browser that calls it, not the container — hence localhost and the published Gateway port.
+  # The host port is 4173 on purpose: the preview origin the Gateway already allows through CORS.
+  web:
+    build:
+      context: .
+      dockerfile: src/Web/Dockerfile
+      args:
+        VITE_GATEWAY_URL: ${VITE_GATEWAY_URL:-http://localhost:5100}
+    ports:
+      - "4173:8080"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

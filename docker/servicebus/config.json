@@ -1,0 +1,103 @@
+{
+  "//": "Topology of the Azure Service Bus emulator for docker-compose. It must stay in sync with BuildingBlocks.Contracts/Topology.cs, which is what the AppHost provisions when running under Aspire. Subscriptions carry one correlation rule per event name, so a consumer only receives the events it handles (the rules are OR-ed).",
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [],
+        "Topics": [
+          {
+            "Name": "order-events",
+            "Properties": {
+              "DefaultMessageTimeToLive": "PT1H",
+              "RequiresDuplicateDetection": false
+            },
+            "Subscriptions": [
+              {
+                "Name": "inventory",
+                "Properties": {
+                  "DeadLetteringOnMessageExpiration": true,
+                  "DefaultMessageTimeToLive": "PT1H",
+                  "LockDuration": "PT1M",
+                  "MaxDeliveryCount": 5,
+                  "RequiresSession": false
+                },
+                "Rules": [
+                  {
+                    "Name": "OrderPlaced",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": { "Label": "OrderPlaced" }
+                    }
+                  }
+                ]
+              },
+              {
+                "Name": "notifications",
+                "Properties": {
+                  "DeadLetteringOnMessageExpiration": true,
+                  "DefaultMessageTimeToLive": "PT1H",
+                  "LockDuration": "PT1M",
+                  "MaxDeliveryCount": 5,
+                  "RequiresSession": false
+                },
+                "Rules": [
+                  {
+                    "Name": "OrderConfirmed",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": { "Label": "OrderConfirmed" }
+                    }
+                  },
+                  {
+                    "Name": "OrderRejected",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": { "Label": "OrderRejected" }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "Name": "inventory-events",
+            "Properties": {
+              "DefaultMessageTimeToLive": "PT1H",
+              "RequiresDuplicateDetection": false
+            },
+            "Subscriptions": [
+              {
+                "Name": "ordering",
+                "Properties": {
+                  "DeadLetteringOnMessageExpiration": true,
+                  "DefaultMessageTimeToLive": "PT1H",
+                  "LockDuration": "PT1M",
+                  "MaxDeliveryCount": 5,
+                  "RequiresSession": false
+                },
+                "Rules": [
+                  {
+                    "Name": "StockReserved",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": { "Label": "StockReserved" }
+                    }
+                  },
+                  {
+                    "Name": "StockRejected",
+                    "Properties": {
+                      "FilterType": "Correlation",
+                      "CorrelationFilter": { "Label": "StockRejected" }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "Logging": { "Type": "File" }
+  }
+}

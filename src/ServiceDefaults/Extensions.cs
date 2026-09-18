@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
@@ -109,7 +110,13 @@ public static class Extensions
     {
         // Adding health checks endpoints to applications in non-development environments has security implications.
         // See https://aka.ms/aspire/healthchecks for details before enabling these endpoints in non-development environments.
-        if (app.Environment.IsDevelopment())
+        // Which is why outside Development the deployment has to ask for them: docker-compose does
+        // (HealthChecks__Expose=true) because the probes are how a container platform tells a started
+        // process from a ready one, and the ports they answer on are not published.
+        var exposeProbes = app.Environment.IsDevelopment()
+            || app.Configuration.GetValue("HealthChecks:Expose", false);
+
+        if (exposeProbes)
         {
             // All health checks must pass for app to be considered ready to accept traffic after starting.
             // Probes are anonymous: services authenticate endpoints by default (see AddJwtAuthentication)
