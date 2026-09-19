@@ -101,6 +101,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | API Gateway | `src/Gateway` | Single entry point, centralized auth and cross-cutting concerns |
 | Clean Architecture | `src/Services/Ordering` | Richest domain; dependencies point inward |
 | Vertical Slice Architecture | `src/Services/Catalog`, `src/Services/Inventory` | CRUD-like services; less ceremony |
+| Minimal APIs + MVC controllers | Minimal APIs in Catalog and the Gateway, controllers in Ordering and Inventory (ADR 0007) | Both ASP.NET Core styles behind one error/validation contract (`BuildingBlocks.Web`) |
 | CQRS (lightweight) | `Ordering.Application` commands/queries | Writes go through the aggregate; reads use `AsNoTracking` projections |
 | Publish/Subscribe (event-driven) | Service Bus topics | Temporal and spatial decoupling |
 | Choreography Saga + Compensation | Order flow | Eventual consistency without distributed transactions |
@@ -146,7 +147,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 |---|---|
 | Runtime | .NET 10 (LTS), C# 14 |
 | Local orchestration | .NET Aspire (AppHost + ServiceDefaults) |
-| APIs | ASP.NET Core Minimal APIs, OpenAPI + Scalar, ProblemDetails |
+| APIs | ASP.NET Core Minimal APIs (Catalog, Gateway) and MVC controllers (Ordering, Inventory), OpenAPI + Scalar, ProblemDetails |
 | Validation | FluentValidation |
 | Mapping | Mapperly (MIT, source generator; replaced Mapster in phase 11, ADR 0006): one `static partial` mapper per area, `IQueryable` projections from the same configuration, `RequiredMappingStrategy.Target` + warnings as errors so an unmapped member fails the build. Catalog stays manual as the reference |
 | Persistence | PostgreSQL, EF Core 10 (Npgsql), migrations |
@@ -234,9 +235,9 @@ for anyone who clones it without credentials.
 | Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, mapper values (in memory and projection) |
 | Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values |
 | Unit | `Notifications.UnitTests` | Notification text built from an order outcome, e-mail status transitions, Null Object vs SMTP sender chosen by configuration |
-| Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
+| Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; enums written as strings on the raw body; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
 | Functional | `Gateway.Tests` | The real Gateway in memory (`WebApplicationFactory`, no backend): token issuing and its failure modes, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused |
-| Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; endpoints do not use Infrastructure |
+| Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; controllers do not use Infrastructure |
 
 Principle: fast tests on business rules, real infrastructure where mocks would lie (database), coverage as a signal, not a goal.
 
@@ -268,7 +269,7 @@ push, and update the **Status** column and the phase notes below.
 | 9 | Containers & CI | ✅ Done | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
 | 10 | Documentation | ✅ Done | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
 | 11 | Mapperly | ✅ Done | Mapster replaced by Mapperly in Ordering and Inventory (mappers + projections), tests, ADR 0006 superseding 0005; project-level dotnet agent skills | `refactor(ordering,inventory): replace mapster with mapperly` |
-| 12 | Controllers | ⏳ Planned | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
+| 12 | Controllers | ✅ Done | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
 
 ### Phase notes
 
@@ -389,6 +390,17 @@ Decisions and facts discovered during implementation that the next phases depend
   - Architecture test: Domain must not depend on `Riok.Mapperly` (was `Mapster`).
   - Agent skills: `docs/ai-workflow.md` lists the `dotnet/skills` plugins used for phases 11–12. `.claude/settings.json` (marketplace + enabled plugins) has to be added by hand; the assistant is not allowed to write its own settings.
   - Verified: build clean with warnings as errors, 151 tests green (136 fast + 15 integration).
+- **Phase 12**
+  - Inventory and Ordering are MVC controllers; Catalog and the Gateway stay on minimal APIs (ADR 0007). Styles are never mixed inside a service. **HTTP contract unchanged**: same routes, status codes, bodies, `Location` of the 202, OpenAPI operation ids/tags/parameters.
+  - `BuildingBlocks.Web` gained the MVC half: `AddApiControllers()` (`AddControllers` + global `ValidationActionFilter` + `JsonStringEnumConverter` + `SuppressImplicitRequiredAttributeForNonNullableReferenceTypes`), `ApiControllerBase` (`[ApiController]` + `Problem(Error)`) and `[RequireAdmin]`. The `Error → status/title/type` table moved to `ErrorProblem`, shared by `ToProblem()` and `Problem(Error)`.
+  - What MVC does differently and had to be pinned: controllers **do not read `ConfigureHttpJsonOptions`** (enums would become numbers; Ordering's minimal API setting was removed, the converter lives in `AddApiControllers()`); `[ApiController]` treats non-nullable strings as `[Required]` (a missing SKU would be a 400 without `code`, before the application validator); MVC error bodies are built with `ProblemDetailsFactory` so the `AddApiProblemDetails()` customization (`instance`, `traceId`) applies.
+  - The FluentValidation action filter is **global**: any action argument with a registered `IValidator<T>` is validated, with the same 400 `ValidationProblem` (field → messages) as the endpoint filter.
+  - Inventory keeps its slices: **one controller per slice**, in the slice folder (`GetStockController`, `UpdateStockController`). MVC only discovers public controllers, so the slice handlers and `GetStockRequest` became public. `[FromQuery(Name = "sku")]` is repeated with `property:` on the record: MVC binds through the constructor parameter but ApiExplorer reads the property (otherwise OpenAPI lists `Skus`).
+  - Ordering: one `OrdersController` (`Ordering.Api/Controllers`), each action injects its handler with `[FromServices]`. `CurrentCustomer` is bound by `CurrentCustomerModelBinder` through `[FromAccessToken]` (`BindingSource.Special`: not an OpenAPI parameter, never inferred as the body); a token without `sub`/`email` still throws `BadHttpRequestException(401)` during binding, before the body is validated. The architecture test is now `Controllers_DoNotUseInfrastructureDirectly` (namespace `Ordering.Api.Controllers`).
+  - Only visible difference: a malformed JSON body is answered by `[ApiController]` with a 400 `ValidationProblem` naming the JSON path instead of a generic 400 ProblemDetails (same status and content type).
+  - Tests: `Ordering.IntegrationTests` +1 (`PlaceOrder_KnownProducts_SerializesStatusAsString`, checked on the raw body because the typed test client also accepts numbers; checked to fail when the converter is removed).
+  - Verified: 151 green before the change (baseline); after it, build clean and 152 green (136 fast + 16 integration). Live in Aspire: the Ordering and Inventory Postman collections pass with newman (29 requests, 75 assertions); raw bodies checked by hand (string enums, validation problems, `Stock.NotFound`, 202 + `Location`); the OpenAPI documents list the same operations, tags, responses and parameters.
+  - Agent skills: the `dotnet/skills` plugins are declared in `.claude/settings.json` but must be installed once per machine (`claude plugin install dotnet-aspnetcore@dotnet-agent-skills`, etc.). This phase applied `dotnet-webapi` and `csharp-refactoring`, read from the local marketplace clone.
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values. docker-compose maps them to the settings each service reads, so every service block shows what it needs.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
@@ -415,6 +427,7 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 4. `0004-yarp-as-api-gateway.md` — YARP (in-process .NET, code/config based) vs Kong or Azure API Management, and how it would evolve in production.
 5. `0005-object-mapping-mapster-and-manual.md` — Mapster (MIT, `ProjectToType` SQL projections) vs AutoMapper (commercial license) vs hand-written mapping; why Catalog stays manual and why mappings never create aggregates. *Superseded by 0006.*
 6. `0006-object-mapping-mapperly.md` — Mapperly (source-generated, compile-time checked, `IQueryable` projections from the same config) replaces Mapster in Ordering and Inventory.
+7. `0007-controllers-for-inventory-and-ordering.md` — MVC controllers for Inventory and Ordering, minimal APIs for Catalog and the Gateway, one error/validation contract for both.
 
 ## 11. Demo script (5–10 minutes)
 

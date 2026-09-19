@@ -247,6 +247,7 @@ after 10 sign-ins in a minute.
 | API Gateway | [`src/Gateway`](src/Gateway) | Single entry point; auth, CORS and rate limiting in one place ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | The richest domain; dependencies point inward, enforced by architecture tests ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
 | Vertical Slice Architecture | Catalog, Inventory | CRUD-like services: one folder per feature, less ceremony |
+| Minimal APIs and MVC controllers | Minimal APIs in Catalog and the Gateway, controllers in Ordering and Inventory | Both ASP.NET Core styles, with the same error and validation contract ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (lightweight) | Ordering | Writes go through the aggregate; reads are `AsNoTracking` projections that never load it |
 | Publish/Subscribe | Service Bus topics + filtered subscriptions | Temporal and spatial decoupling |
 | Choreography Saga + compensation | The order flow | Eventual consistency without distributed transactions ([ADR 0003](docs/adr/0003-choreography-over-orchestration.md)) |
@@ -327,7 +328,7 @@ src/
 │  ├─ BuildingBlocks.Common/     Result, Error
 │  ├─ BuildingBlocks.Contracts/  Integration events + Service Bus topology
 │  ├─ BuildingBlocks.Messaging/  IEventBus, Service Bus adapter, outbox, inbox, consumer pipeline
-│  └─ BuildingBlocks.Web/        ProblemDetails, validation filter, endpoint discovery, JWT validation
+│  └─ BuildingBlocks.Web/        ProblemDetails, validation filters, endpoint discovery, MVC setup, JWT validation
 ├─ Gateway/                 YARP + token issuing
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice

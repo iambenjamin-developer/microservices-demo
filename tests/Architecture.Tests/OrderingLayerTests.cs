@@ -115,12 +115,12 @@ public sealed class OrderingLayerTests
     }
 
     [Fact]
-    public void Endpoints_DoNotUseInfrastructureDirectly()
+    public void Controllers_DoNotUseInfrastructureDirectly()
     {
-        // Endpoints talk to the application ports; only Program.cs (the composition root) knows Infrastructure.
+        // Controllers talk to the application ports; only Program.cs (the composition root) knows Infrastructure.
         var result = Types.InAssembly(_api)
             .That()
-            .ResideInNamespace("Ordering.Api.Endpoints")
+            .ResideInNamespace("Ordering.Api.Controllers")
             .ShouldNot()
             .HaveDependencyOnAny(InfrastructureNamespace, "Microsoft.EntityFrameworkCore")
             .GetResult();

@@ -249,6 +249,7 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | API Gateway | [`src/Gateway`](src/Gateway) | Ponto de entrada único; autenticação, CORS e rate limiting em um só lugar ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | O domínio mais rico; dependências apontam para dentro, garantido por testes de arquitetura ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
 | Vertical Slice Architecture | Catalog, Inventory | Serviços tipo CRUD: uma pasta por funcionalidade, menos cerimônia |
+| Minimal APIs e controllers MVC | Minimal APIs no Catalog e no Gateway, controllers no Ordering e no Inventory | Os dois estilos do ASP.NET Core, com o mesmo contrato de erros e validação ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (leve) | Ordering | Escritas passam pelo agregado; leituras são projeções `AsNoTracking` que nunca o carregam |
 | Publish/Subscribe | Tópicos do Service Bus + assinaturas filtradas | Desacoplamento temporal e espacial |
 | Saga por coreografia + compensação | O fluxo do pedido | Consistência eventual sem transações distribuídas ([ADR 0003](docs/adr/0003-choreography-over-orchestration.md)) |
@@ -330,7 +331,7 @@ src/
 │  ├─ BuildingBlocks.Common/     Result, Error
 │  ├─ BuildingBlocks.Contracts/  Eventos de integração + topologia do Service Bus
 │  ├─ BuildingBlocks.Messaging/  IEventBus, adapter do Service Bus, outbox, inbox, pipeline do consumidor
-│  └─ BuildingBlocks.Web/        ProblemDetails, filtro de validação, descoberta de endpoints, validação de JWT
+│  └─ BuildingBlocks.Web/        ProblemDetails, filtros de validação, descoberta de endpoints, configuração MVC, validação de JWT
 ├─ Gateway/                 YARP + emissão de tokens
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice
