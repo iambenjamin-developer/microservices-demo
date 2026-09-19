@@ -317,9 +317,6 @@ Frontend: `npm --prefix src/Web run lint` and `npm --prefix src/Web run build`.
 2. **frontend** — `npm ci`, lint, build.
 3. **docker** — needs both; builds the six images with Buildx and the GitHub Actions cache (no push).
 
-> Every step passes locally. The first run on GitHub is still pending: the account was locked by a billing issue,
-> which blocks Actions even on a public repository.
-
 ## Repository layout
 
 ```

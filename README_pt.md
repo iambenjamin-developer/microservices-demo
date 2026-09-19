@@ -320,9 +320,6 @@ O [`.github/workflows/ci.yml`](.github/workflows/ci.yml) roda em push e pull req
 2. **frontend** — `npm ci`, lint, build.
 3. **docker** — depende dos dois; constrói as seis imagens com Buildx e o cache do GitHub Actions (sem push).
 
-> Todos os passos passam localmente. A primeira execução no GitHub ainda está pendente: a conta foi bloqueada por um
-> problema de cobrança, o que bloqueia o Actions mesmo em um repositório público.
-
 ## Estrutura do repositório
 
 ```

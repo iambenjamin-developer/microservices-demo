@@ -46,4 +46,3 @@ What the MVP does not show, and what would come next:
   README's next steps.
 - **Load and contract tests**: none; the event contracts are shared code, which is acceptable in a monorepo but
   would need consumer-driven contract tests across repositories.
-- **The first GitHub Actions run** is pending an account billing issue; every step passes locally.
