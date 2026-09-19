@@ -1,5 +1,5 @@
 using BuildingBlocks.Web.Authentication;
-using BuildingBlocks.Web.Endpoints;
+using BuildingBlocks.Web.Mvc;
 using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using FluentValidation;
@@ -25,7 +25,7 @@ builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>(includeInternalTypes: true);
 builder.Services.AddInventoryFeatures();
-builder.Services.AddEndpoints(typeof(Program).Assembly);
+builder.Services.AddApiControllers();
 
 var app = builder.Build();
 
@@ -41,7 +41,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapDefaultEndpoints();
-app.MapEndpoints();
+app.MapControllers();
 
 await app.MigrateDatabaseAsync();
 await app.RunAsync();

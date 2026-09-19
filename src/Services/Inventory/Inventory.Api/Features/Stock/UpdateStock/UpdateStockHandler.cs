@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Api.Features.Stock.UpdateStock;
 
-internal sealed class UpdateStockHandler(
+public sealed class UpdateStockHandler(
     InventoryDbContext dbContext,
     TimeProvider timeProvider)
 {

@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Api.Features.Stock.GetStock;
 
-internal sealed class GetStockHandler(InventoryDbContext dbContext)
+public sealed class GetStockHandler(InventoryDbContext dbContext)
 {
     public async Task<IReadOnlyList<StockResponse>> HandleAsync(GetStockRequest request, CancellationToken cancellationToken)
     {
