@@ -1,5 +1,4 @@
 using BuildingBlocks.Common.Results;
-using MapsterMapper;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Ordering.Application.Abstractions.Catalog;
@@ -117,8 +116,7 @@ public sealed class PlaceOrderCommandHandlerTests
             _unitOfWork,
             discountPolicy ?? NoDiscountPolicy.Instance,
             Options.Create(new PricingOptions { Currency = currency }),
-            _timeProvider,
-            new Mapper(DependencyInjection.CreateMappingConfig()));
+            _timeProvider);
 
     private void GivenCatalog(params CatalogProduct[] products) =>
         _catalogClient.GetProductsAsync(Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())

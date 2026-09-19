@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <!-- Composition root and HTTP surface. Endpoints translate HTTP ↔ commands/queries and nothing else. -->
+  <!-- Composition root and HTTP surface. Controllers translate HTTP ↔ commands/queries and nothing else. -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\ServiceDefaults\ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Web\BuildingBlocks.Web.csproj" />

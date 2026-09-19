@@ -1,6 +1,6 @@
 # ADR 0002 — Architecture style chosen per service
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0008](0008-service-layer-for-inventory.md) (Inventory uses a service layer instead of vertical slices)
 - **Date:** 2026-09-16
 
 ## Context
@@ -28,19 +28,22 @@ Choose the style per service, and make the choice explicit:
     `IUnitOfWork`, `IAccessTokenProvider`). Depends only on the domain and on abstractions packages.
   - `Ordering.Infrastructure` — EF Core, outbox interceptor, Catalog HTTP client with Polly, Service Bus consumers
     and the **query handlers** (reads project straight to DTOs and never load the aggregate).
-  - `Ordering.Api` — endpoints and the composition root.
+  - `Ordering.Api` — controllers (since [ADR 0007](0007-controllers-for-inventory-and-ordering.md)) and the composition root.
   - The dependency rule is **enforced by tests** (`tests/Architecture.Tests`, NetArchTest): the domain cannot see
     Application, Infrastructure, EF Core or ASP.NET Core; Application cannot see Infrastructure, EF Core, ASP.NET
-    Core, Service Bus or HTTP; command handlers are internal and sealed; endpoints do not use Infrastructure.
+    Core, Service Bus or HTTP; command handlers are internal and sealed; controllers do not use Infrastructure.
 - **Catalog and Inventory → Vertical Slice Architecture**, one project each: `Features/<Area>/<Feature>/` holds the
-  endpoint, request, handler and validator of one use case. Handlers use the `DbContext` directly (no repository).
+  endpoint (a controller in Inventory, see ADR 0007), request, handler and validator of one use case. Handlers use the `DbContext` directly (no repository).
   Inventory still keeps its one real rule in a pure function (`StockReservation.Reserve`) so it is unit tested
   without a database.
+  - *Amended by [ADR 0008](0008-service-layer-for-inventory.md):* Inventory now uses a service layer
+    (`StockController` → `IStockService` → `StockService`), shared by the HTTP API and the `OrderPlaced` consumer.
+    Catalog stays the vertical slice reference.
 - **Notifications → Azure Function**, one project organized by technical concern (`Api`, `Messaging`, `Domain`,
   `Email`, `Persistence`), because the triggers are the entry points.
 
-Everything shared across styles lives in building blocks: `Result`, `ProblemDetails` mapping, the validation filter,
-endpoint discovery, JWT validation, messaging.
+Everything shared across styles lives in building blocks: `Result`, `ProblemDetails` mapping, the validation filters,
+endpoint discovery, MVC setup, JWT validation, messaging.
 
 ## Consequences
 

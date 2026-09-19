@@ -57,9 +57,14 @@ jobs:
       # Testcontainers starts a real PostgreSQL; the Ubuntu runner has a Docker daemon available.
       - name: Integration tests
         run: |
-          dotnet test tests/Ordering.IntegrationTests --configuration Release --no-build \
-            --logger "trx;LogFileName=Ordering.IntegrationTests.trx" \
-            --results-directory "$GITHUB_WORKSPACE/TestResults"
+          for project in \
+            tests/Ordering.IntegrationTests \
+            tests/Inventory.IntegrationTests
+          do
+            dotnet test "$project" --configuration Release --no-build \
+              --logger "trx;LogFileName=$(basename "$project").trx" \
+              --results-directory "$GITHUB_WORKSPACE/TestResults"
+          done
 
       - name: Publish test results
         if: always()

@@ -48,7 +48,7 @@ Azure Service Bus (emulador)
 | **Gateway** | Host mínimo + YARP | Ponto de entrada único: proxy reverso, emissão de tokens de demo, validação de JWT, CORS, rate limiting | `POST /auth/token`, faz proxy de `/api/*` |
 | **Catalog** | Vertical Slice | Produtos (SKU, nome, estilo, volume, tamanho do pack, preço) | `GET /api/products`, `GET /api/products/{id}`, `POST`/`PUT /api/products` (Admin) |
 | **Ordering** | Clean Architecture + DDD | Ciclo de vida do pedido, descontos por volume, publica e consome eventos | `POST /api/orders`, `GET /api/orders`, `GET /api/orders/{id}` |
-| **Inventory** | Vertical Slice | Estoque por SKU, reserva tudo-ou-nada | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
+| **Inventory** | Camada de serviço | Estoque por SKU, reserva tudo-ou-nada | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
 | **Notifications** | Azure Function (isolated worker) | Registra o resultado dos pedidos, envia o e-mail, serve o painel | `GET /api/notifications` |
 | **Web** | React + Vite + TypeScript | Login, catálogo, carrinho, pedidos com status ao vivo, painel de notificações | — |
 
@@ -248,7 +248,9 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | Microsserviços + banco por serviço | Catalog, Ordering, Inventory, Notifications | Deploy independente e posse dos dados |
 | API Gateway | [`src/Gateway`](src/Gateway) | Ponto de entrada único; autenticação, CORS e rate limiting em um só lugar ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | O domínio mais rico; dependências apontam para dentro, garantido por testes de arquitetura ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
-| Vertical Slice Architecture | Catalog, Inventory | Serviços tipo CRUD: uma pasta por funcionalidade, menos cerimônia |
+| Vertical Slice Architecture | [`src/Services/Catalog`](src/Services/Catalog) | Serviço tipo CRUD: uma pasta por funcionalidade, menos cerimônia |
+| Camada de serviço (controller → interface de serviço → implementação) | [`src/Services/Inventory`](src/Services/Inventory): `StockController` → `IStockService` → `StockService` | O estilo mais comum nos serviços .NET existentes; aqui também dá à API HTTP e ao consumidor de `OrderPlaced` um único lugar dono do estoque ([ADR 0008](docs/adr/0008-service-layer-for-inventory.md)) |
+| Minimal APIs e controllers MVC | Minimal APIs no Catalog e no Gateway, controllers no Ordering e no Inventory | Os dois estilos do ASP.NET Core, com o mesmo contrato de erros e validação ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (leve) | Ordering | Escritas passam pelo agregado; leituras são projeções `AsNoTracking` que nunca o carregam |
 | Publish/Subscribe | Tópicos do Service Bus + assinaturas filtradas | Desacoplamento temporal e espacial |
 | Saga por coreografia + compensação | O fluxo do pedido | Consistência eventual sem transações distribuídas ([ADR 0003](docs/adr/0003-choreography-over-orchestration.md)) |
@@ -283,7 +285,7 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` (`Email:Enabled=false`), `NoDiscountPolicy` |
 | Result pattern | [`Result` / `Error`](src/BuildingBlocks/BuildingBlocks.Common/Results) mapeados para `ProblemDetails` (RFC 9457) |
-| Mapeamento de objetos | Mapster em Ordering e Inventory (`ProjectToType` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
+| Mapeamento de objetos | Mapperly em Ordering e Inventory (gerado em tempo de compilação, verificado pelo compilador, `ProjectToResponse()` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0006](docs/adr/0006-object-mapping-mapperly.md), que substitui a [0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
 | Options pattern | `PricingOptions`, `CatalogClientOptions`, `OutboxOptions`, `JwtOptions`, `EmailOptions` (validadas na inicialização) |
 | Test Data Builder | [`OrderBuilder`](tests/Ordering.Domain.UnitTests/Builders/OrderBuilder.cs) |
 
@@ -296,10 +298,11 @@ dotnet test microservices-demo.slnx
 | Nível | Projeto | O quê |
 |---|---|---|
 | Unitário | `Ordering.Domain.UnitTests` | Invariantes do agregado, transições de estado, estratégias de desconto, value objects |
-| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, compilação estrita da config do Mapster |
-| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, config do Mapster |
+| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, valores dos mappers (em memória e projeção) |
+| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, valores dos mappers, `StockController` com `IStockService` mockado (NSubstitute) |
 | Unitário | `Notifications.UnitTests` | Texto da notificação, transições do status do e-mail, Null Object vs remetente SMTP por configuração |
 | Integração | `Ordering.IntegrationTests` | API + EF Core contra **PostgreSQL real** (Testcontainers): pedido e linha do outbox gravados atomicamente, resultados de estoque confirmam ou rejeitam o pedido (um atrasado é ignorado, um de pedido desconhecido é reprocessado), leituras por cliente, validação de token |
+| Integração | `Inventory.IntegrationTests` | API + EF Core contra **PostgreSQL real** (Testcontainers), escritos antes da refatoração para a camada de serviço para fixar o contrato: lista de estoque com e sem `?sku=`, 400 acima de 100 SKUs, `PUT` 200 / 400 / 404 / 401 / 403, e o consumidor de `OrderPlaced` reservando tudo-ou-nada e registrando `StockReserved` / `StockRejected` no outbox |
 | Funcional | `Gateway.Tests` | O Gateway real em memória: emissão de tokens, 401 antes do proxy, 403 para o papel errado, preflight de CORS |
 | Arquitetura | `Architecture.Tests` | As camadas do Ordering só dependem para dentro (NetArchTest) |
 
@@ -312,13 +315,10 @@ Frontend: `npm --prefix src/Web run lint` e `npm --prefix src/Web run build`.
 O [`.github/workflows/ci.yml`](.github/workflows/ci.yml) roda em push e pull request para `main`:
 
 1. **backend** — .NET SDK do `global.json`, build Release com warnings como erros (incluindo estilo de código),
-   testes unitários, de arquitetura e do Gateway, depois os testes de integração com Testcontainers; os resultados
+   testes unitários, de arquitetura e do Gateway, depois os testes de integração com Testcontainers (Ordering e Inventory); os resultados
    `.trx` são publicados.
 2. **frontend** — `npm ci`, lint, build.
 3. **docker** — depende dos dois; constrói as seis imagens com Buildx e o cache do GitHub Actions (sem push).
-
-> Todos os passos passam localmente. A primeira execução no GitHub ainda está pendente: a conta foi bloqueada por um
-> problema de cobrança, o que bloqueia o Actions mesmo em um repositório público.
 
 ## Estrutura do repositório
 
@@ -330,12 +330,12 @@ src/
 │  ├─ BuildingBlocks.Common/     Result, Error
 │  ├─ BuildingBlocks.Contracts/  Eventos de integração + topologia do Service Bus
 │  ├─ BuildingBlocks.Messaging/  IEventBus, adapter do Service Bus, outbox, inbox, pipeline do consumidor
-│  └─ BuildingBlocks.Web/        ProblemDetails, filtro de validação, descoberta de endpoints, validação de JWT
+│  └─ BuildingBlocks.Web/        ProblemDetails, filtros de validação, descoberta de endpoints, configuração MVC, validação de JWT
 ├─ Gateway/                 YARP + emissão de tokens
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice
 │  ├─ Ordering/Ordering.Domain | .Application | .Infrastructure | .Api   Clean Architecture
-│  └─ Inventory/Inventory.Api/          Vertical Slice
+│  └─ Inventory/Inventory.Api/          Camada de serviço (controller → IStockService)
 ├─ Functions/Notifications/ Azure Function (isolated worker)
 └─ Web/                     React + Vite + TypeScript
 tests/                      Testes unitários, de integração, funcionais e de arquitetura

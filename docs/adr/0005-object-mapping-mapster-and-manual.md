@@ -1,6 +1,6 @@
 # ADR 0005 — Object mapping: Mapster in Ordering and Inventory, by hand in Catalog and Notifications
 
-- **Status:** Accepted
+- **Status:** Superseded by [0006](0006-object-mapping-mapperly.md)
 - **Date:** 2026-09-17
 
 ## Context

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <!-- Vertical slices + the OrderPlaced consumer. One project: this service has no domain worth layering. -->
+  <!-- StockController -> IStockService -> StockService, shared with the OrderPlaced consumer (ADR 0008).
+       One project: the layers are folders; this service has no domain worth splitting into assemblies. -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\ServiceDefaults\ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Web\BuildingBlocks.Web.csproj" />
@@ -11,8 +12,7 @@
     <PackageReference Include="Aspire.Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
-    <PackageReference Include="Mapster" />
-    <PackageReference Include="Mapster.DependencyInjection" />
+    <PackageReference Include="Riok.Mapperly" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
   </ItemGroup>
 

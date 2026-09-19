@@ -1,5 +1,4 @@
 using BuildingBlocks.Common.Results;
-using MapsterMapper;
 using Microsoft.Extensions.Options;
 using Ordering.Application.Abstractions.Catalog;
 using Ordering.Application.Abstractions.Messaging;
@@ -22,8 +21,7 @@ internal sealed class PlaceOrderCommandHandler(
     IUnitOfWork unitOfWork,
     IDiscountPolicy discountPolicy,
     IOptions<PricingOptions> pricingOptions,
-    TimeProvider timeProvider,
-    IMapper mapper) : ICommandHandler<PlaceOrderCommand, OrderResponse>
+    TimeProvider timeProvider) : ICommandHandler<PlaceOrderCommand, OrderResponse>
 {
     public async Task<Result<OrderResponse>> HandleAsync(PlaceOrderCommand command, CancellationToken cancellationToken)
     {
@@ -70,7 +68,7 @@ internal sealed class PlaceOrderCommandHandler(
         orderRepository.Add(orderResult.Value);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return mapper.Map<OrderResponse>(orderResult.Value);
+        return orderResult.Value.ToResponse();
     }
 
     private static Result<OrderLine> CreateLine(PlaceOrderItem item, CatalogProduct product, string currency)
