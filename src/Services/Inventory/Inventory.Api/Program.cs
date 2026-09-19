@@ -4,7 +4,6 @@ using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using FluentValidation;
 using Inventory.Api.Features;
-using Inventory.Api.Mapping;
 using Inventory.Api.Messaging;
 using Inventory.Api.Persistence;
 using Scalar.AspNetCore;
@@ -25,7 +24,6 @@ builder.Services.AddApiProblemDetails();
 builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>(includeInternalTypes: true);
-builder.Services.AddInventoryMapping();
 builder.Services.AddInventoryFeatures();
 builder.Services.AddEndpoints(typeof(Program).Assembly);
 

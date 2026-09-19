@@ -45,7 +45,7 @@ public sealed class OrderingLayerTests
                 "BuildingBlocks.Messaging",
                 "BuildingBlocks.Contracts",
                 "FluentValidation",
-                "Mapster")
+                "Riok.Mapperly")
             .GetResult();
 
         AssertSuccessful(result);

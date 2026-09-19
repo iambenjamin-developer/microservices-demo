@@ -1,14 +1,12 @@
 using BuildingBlocks.Common.Results;
 using Inventory.Api.Domain;
 using Inventory.Api.Persistence;
-using MapsterMapper;
 using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Api.Features.Stock.UpdateStock;
 
 internal sealed class UpdateStockHandler(
     InventoryDbContext dbContext,
-    IMapper mapper,
     TimeProvider timeProvider)
 {
     public async Task<Result<StockResponse>> HandleAsync(string sku, UpdateStockRequest request, CancellationToken cancellationToken)
@@ -27,6 +25,6 @@ internal sealed class UpdateStockHandler(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return mapper.Map<StockResponse>(stockItem);
+        return stockItem.ToResponse();
     }
 }

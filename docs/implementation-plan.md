@@ -135,7 +135,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` when `Email:Enabled = false` — no `if` checks spread through the code |
 | Result Pattern | `Result` / `Result<T>` + `Error`, mapped to RFC 9457 `ProblemDetails` |
-| Object Mapping (Mapster) | Ordering and Inventory: `IRegister` configs + `IMapper`, `ProjectToType<T>()` for EF reads. **Catalog maps by hand on purpose** (expression projection + `FromProduct`) to show both approaches side by side |
+| Object Mapping (Mapperly) | Ordering and Inventory: source-generated `OrderMapper` / `StockMapper` (`ToResponse()` in memory, `ProjectToResponse()` for EF reads). **Catalog maps by hand on purpose** (expression projection + `FromProduct`) to show both approaches side by side |
 | Options Pattern | `PricingOptions` (currency + discount tiers), `CatalogClientOptions`, `OutboxOptions`, `JwtOptions` |
 | Dependency Injection | Everywhere |
 | Test Data Builder | `OrderBuilder` in tests |
@@ -148,7 +148,7 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Local orchestration | .NET Aspire (AppHost + ServiceDefaults) |
 | APIs | ASP.NET Core Minimal APIs, OpenAPI + Scalar, ProblemDetails |
 | Validation | FluentValidation |
-| Mapping | Mapster (MIT) in runtime mode: `TypeAdapterConfig` in DI (`IMapper` via `Mapster.DependencyInjection`), one `IRegister` per area, `ProjectToType<T>()` for queries; the config is compiled in a test so broken mappings fail the build, not a request. Catalog stays manual as the reference |
+| Mapping | Mapperly (MIT, source generator; replaced Mapster in phase 11, ADR 0006): one `static partial` mapper per area, `IQueryable` projections from the same configuration, `RequiredMappingStrategy.Target` + warnings as errors so an unmapped member fails the build. Catalog stays manual as the reference |
 | Persistence | PostgreSQL, EF Core 10 (Npgsql), migrations |
 | Messaging | Azure Service Bus emulator, `Azure.Messaging.ServiceBus` SDK |
 | Serverless | Azure Functions v4, isolated worker |
@@ -231,8 +231,8 @@ for anyone who clones it without credentials.
 | Level | Project | What |
 |---|---|---|
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
-| Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, strict Mapster config compile |
-| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules |
+| Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, mapper values (in memory and projection) |
+| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values |
 | Unit | `Notifications.UnitTests` | Notification text built from an order outcome, e-mail status transitions, Null Object vs SMTP sender chosen by configuration |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
 | Functional | `Gateway.Tests` | The real Gateway in memory (`WebApplicationFactory`, no backend): token issuing and its failure modes, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused |
@@ -267,6 +267,8 @@ push, and update the **Status** column and the phase notes below.
 | 8 | Web | ✅ Done | Login, catalog, cart, orders with live status, notifications panel | `feat(web): ...` |
 | 9 | Containers & CI | ✅ Done | Dockerfiles, `docker-compose.yml`, GitHub Actions workflow green | `build(docker): ...`, `ci: ...` |
 | 10 | Documentation | ✅ Done | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
+| 11 | Mapperly | ✅ Done | Mapster replaced by Mapperly in Ordering and Inventory (mappers + projections), tests, ADR 0006 superseding 0005; project-level dotnet agent skills | `refactor(ordering,inventory): replace mapster with mapperly` |
+| 12 | Controllers | ⏳ Planned | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
 
 ### Phase notes
 
@@ -379,6 +381,14 @@ Decisions and facts discovered during implementation that the next phases depend
   - `docs/ai-workflow.md` describes the process: plan first, `CLAUDE.md` conventions backed by mechanical checks, one session per phase with the repository as memory, the review loop, the problems found only by running the system (taken from these phase notes), and what stayed with the human.
   - `README_pt.md` is a Portuguese (pt-BR) translation of `README.md` only; it links to the English `docs/`. Both READMEs link to each other. When `README.md` changes, `README_pt.md` must be updated in the same commit.
   - The CI note in both READMEs and in the requirements map says the first GitHub run is still pending (billing lock, see phase 9); remove it once the workflow is green.
+- **Phase 11**
+  - `Riok.Mapperly` replaces `Mapster` + `Mapster.DependencyInjection` (ADR 0006; 0005 marked superseded). Referenced with `ExcludeAssets="runtime" PrivateAssets="all"`: only the generator and its attributes, nothing at runtime.
+  - `OrderMapper` (`Ordering.Application/Orders`, public because the query handlers in Infrastructure use it): `ToResponse`, `ToSummary`, `ProjectToResponse`, `ProjectToSummary`. `StockMapper` (`Inventory.Api/Features/Stock`, internal): `ToResponse`, `ProjectToResponse`. No DI registration; `IMapper` / `TypeAdapterConfig` are gone from handlers and `DependencyInjection.CreateMappingConfig()` / `InventoryMapping` were deleted.
+  - Strictness moved from tests to the compiler: `RequiredMappingStrategy.Target` + warnings as errors. Checked by removing a mapping: the build fails with RMG012. The `Compile()` / `CompileProjection()` tests were replaced by value tests and by tests that run each projection over an in-memory `IQueryable` and compare it with the in-memory mapping.
+  - Computed members (line total rounded to cents, item count, items sorted by SKU, quantity on hand) are expression-bodied helpers. The generated projection inlines them into one `Select` (checked in `obj/.../generated` with `EmitCompilerGeneratedFiles=true`), and the Ordering integration tests prove PostgreSQL translates it.
+  - Architecture test: Domain must not depend on `Riok.Mapperly` (was `Mapster`).
+  - Agent skills: `docs/ai-workflow.md` lists the `dotnet/skills` plugins used for phases 11–12. `.claude/settings.json` (marketplace + enabled plugins) has to be added by hand; the assistant is not allowed to write its own settings.
+  - Verified: build clean with warnings as errors, 151 tests green (136 fast + 15 integration).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values. docker-compose maps them to the settings each service reads, so every service block shows what it needs.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
@@ -403,7 +413,8 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 2. `0002-architecture-style-per-service.md` — Clean Architecture for Ordering, Vertical Slice for Catalog/Inventory.
 3. `0003-choreography-over-orchestration.md` — why choreography for a three-step flow, and when an orchestrated Saga would be preferred.
 4. `0004-yarp-as-api-gateway.md` — YARP (in-process .NET, code/config based) vs Kong or Azure API Management, and how it would evolve in production.
-5. `0005-object-mapping-mapster-and-manual.md` — Mapster (MIT, `ProjectToType` SQL projections) vs AutoMapper (commercial license) vs hand-written mapping; why Catalog stays manual and why mappings never create aggregates.
+5. `0005-object-mapping-mapster-and-manual.md` — Mapster (MIT, `ProjectToType` SQL projections) vs AutoMapper (commercial license) vs hand-written mapping; why Catalog stays manual and why mappings never create aggregates. *Superseded by 0006.*
+6. `0006-object-mapping-mapperly.md` — Mapperly (source-generated, compile-time checked, `IQueryable` projections from the same config) replaces Mapster in Ordering and Inventory.
 
 ## 11. Demo script (5–10 minutes)
 

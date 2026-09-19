@@ -283,7 +283,7 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` (`Email:Enabled=false`), `NoDiscountPolicy` |
 | Result pattern | [`Result` / `Error`](src/BuildingBlocks/BuildingBlocks.Common/Results) mapeados para `ProblemDetails` (RFC 9457) |
-| Mapeamento de objetos | Mapster em Ordering e Inventory (`ProjectToType` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
+| Mapeamento de objetos | Mapperly em Ordering e Inventory (gerado em tempo de compilação, verificado pelo compilador, `ProjectToResponse()` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0006](docs/adr/0006-object-mapping-mapperly.md), que substitui a [0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
 | Options pattern | `PricingOptions`, `CatalogClientOptions`, `OutboxOptions`, `JwtOptions`, `EmailOptions` (validadas na inicialização) |
 | Test Data Builder | [`OrderBuilder`](tests/Ordering.Domain.UnitTests/Builders/OrderBuilder.cs) |
 
@@ -296,8 +296,8 @@ dotnet test microservices-demo.slnx
 | Nível | Projeto | O quê |
 |---|---|---|
 | Unitário | `Ordering.Domain.UnitTests` | Invariantes do agregado, transições de estado, estratégias de desconto, value objects |
-| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, compilação estrita da config do Mapster |
-| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, config do Mapster |
+| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, valores dos mappers (em memória e projeção) |
+| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, valores dos mappers |
 | Unitário | `Notifications.UnitTests` | Texto da notificação, transições do status do e-mail, Null Object vs remetente SMTP por configuração |
 | Integração | `Ordering.IntegrationTests` | API + EF Core contra **PostgreSQL real** (Testcontainers): pedido e linha do outbox gravados atomicamente, resultados de estoque confirmam ou rejeitam o pedido (um atrasado é ignorado, um de pedido desconhecido é reprocessado), leituras por cliente, validação de token |
 | Funcional | `Gateway.Tests` | O Gateway real em memória: emissão de tokens, 401 antes do proxy, 403 para o papel errado, preflight de CORS |

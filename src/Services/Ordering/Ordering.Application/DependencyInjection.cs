@@ -1,6 +1,4 @@
 using FluentValidation;
-using Mapster;
-using MapsterMapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -25,7 +23,6 @@ public static class DependencyInjection
         services.TryAddSingleton(TimeProvider.System);
 
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly, includeInternalTypes: true);
-        services.AddOrderingMapping();
         services.AddPricing();
 
         // One line per use case: the list doubles as the index of what the service can do.
@@ -34,32 +31,6 @@ public static class DependencyInjection
         services.AddCommandHandler<RejectOrderCommand, OrderStatus, RejectOrderCommandHandler>();
 
         return services;
-    }
-
-    /// <summary>
-    /// Builds the Mapster configuration from every <see cref="IRegister"/> in this assembly and exposes it as
-    /// <see cref="IMapper"/> (in-memory maps) and <see cref="TypeAdapterConfig"/> (<c>ProjectToType</c> in queries).
-    /// </summary>
-    /// <remarks>
-    /// Strict on purpose: only declared type pairs can be mapped and every destination member needs a source, so a
-    /// renamed property breaks <c>Compile()</c> in a unit test instead of silently returning a default value.
-    /// </remarks>
-    public static TypeAdapterConfig CreateMappingConfig()
-    {
-        var config = new TypeAdapterConfig
-        {
-            RequireExplicitMapping = true,
-            RequireDestinationMemberSource = true,
-        };
-
-        config.Scan(typeof(DependencyInjection).Assembly);
-        return config;
-    }
-
-    private static void AddOrderingMapping(this IServiceCollection services)
-    {
-        services.AddSingleton(CreateMappingConfig());
-        services.AddScoped<IMapper, ServiceMapper>();
     }
 
     private static void AddPricing(this IServiceCollection services)
