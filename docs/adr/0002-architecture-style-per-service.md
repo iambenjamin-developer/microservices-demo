@@ -1,6 +1,6 @@
 # ADR 0002 — Architecture style chosen per service
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0008](0008-service-layer-for-inventory.md) (Inventory uses a service layer instead of vertical slices)
 - **Date:** 2026-09-16
 
 ## Context
@@ -36,6 +36,9 @@ Choose the style per service, and make the choice explicit:
   endpoint (a controller in Inventory, see ADR 0007), request, handler and validator of one use case. Handlers use the `DbContext` directly (no repository).
   Inventory still keeps its one real rule in a pure function (`StockReservation.Reserve`) so it is unit tested
   without a database.
+  - *Amended by [ADR 0008](0008-service-layer-for-inventory.md):* Inventory now uses a service layer
+    (`StockController` → `IStockService` → `StockService`), shared by the HTTP API and the `OrderPlaced` consumer.
+    Catalog stays the vertical slice reference.
 - **Notifications → Azure Function**, one project organized by technical concern (`Api`, `Messaging`, `Domain`,
   `Email`, `Persistence`), because the triggers are the entry points.
 

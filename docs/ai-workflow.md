@@ -27,7 +27,7 @@ never need repeating:
   committing**;
 - build rules (Central Package Management, warnings as errors, `.editorconfig`);
 - architecture rules (database per service, outbox only, idempotent consumers, Clean Architecture in Ordering,
-  vertical slices elsewhere, `Result` instead of exceptions, who issues and who validates tokens, where Mapperly is
+  vertical slices in Catalog, a service layer in Inventory, `Result` instead of exceptions, who issues and who validates tokens, where Mapperly is
   allowed and where it is not);
 - testing rules (naming, Testcontainers, never mock the database).
 

@@ -75,7 +75,7 @@ Azure Service Bus (emulator)
 | **Gateway** | Minimal host | YARP reverse proxy, JWT validation, demo token issuing (`bar`, `market`, `admin`), CORS, rate limiting | `POST /auth/token`, proxies `/api/*` |
 | **Catalog** | Vertical Slice | Beer products (SKU, name, style, volume, pack size, price) | `GET /api/products`, `GET /api/products/{id}`, `POST/PUT /api/products` (Admin) |
 | **Ordering** | Clean Architecture + DDD | Order lifecycle, discount policies, event publishing/consuming | `POST /api/orders`, `GET /api/orders`, `GET /api/orders/{id}` |
-| **Inventory** | Vertical Slice | Stock per SKU, all-or-nothing reservation | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
+| **Inventory** | Service layer (ADR 0008) | Stock per SKU, all-or-nothing reservation | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
 | **Notifications** | Azure Function (isolated worker) | Consumes order outcome events, stores notifications, sends email (optional), exposes them | `GET /api/notifications` (HTTP trigger) |
 | **Web** | React + Vite + TypeScript | Login, catalog, cart, orders (live status), notifications panel | — |
 
@@ -100,7 +100,8 @@ Every message carries `MessageId` (idempotency), `CorrelationId` (= orderId, tra
 | Microservices + Database per Service | Catalog, Ordering, Inventory, Notifications | Independent deployment and data ownership |
 | API Gateway | `src/Gateway` | Single entry point, centralized auth and cross-cutting concerns |
 | Clean Architecture | `src/Services/Ordering` | Richest domain; dependencies point inward |
-| Vertical Slice Architecture | `src/Services/Catalog`, `src/Services/Inventory` | CRUD-like services; less ceremony |
+| Vertical Slice Architecture | `src/Services/Catalog` | CRUD-like service; less ceremony |
+| Service layer (controller → service interface → implementation) | `src/Services/Inventory`: `StockController` → `IStockService` → `StockService` | The most common style in existing .NET services; the HTTP API and the `OrderPlaced` consumer share one owner of stock (ADR 0008) |
 | Minimal APIs + MVC controllers | Minimal APIs in Catalog and the Gateway, controllers in Ordering and Inventory (ADR 0007) | Both ASP.NET Core styles behind one error/validation contract (`BuildingBlocks.Web`) |
 | CQRS (lightweight) | `Ordering.Application` commands/queries | Writes go through the aggregate; reads use `AsNoTracking` projections |
 | Publish/Subscribe (event-driven) | Service Bus topics | Temporal and spatial decoupling |
@@ -190,6 +191,7 @@ microservices-demo/
 │  ├─ Inventory.UnitTests/
 │  ├─ Notifications.UnitTests/
 │  ├─ Ordering.IntegrationTests/
+│  ├─ Inventory.IntegrationTests/
 │  ├─ Gateway.Tests/
 │  └─ Architecture.Tests/
 ├─ docs/
@@ -233,9 +235,10 @@ for anyone who clones it without credentials.
 |---|---|---|
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
 | Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, mapper values (in memory and projection) |
-| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values |
+| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values, `StockController` with `IStockService` mocked (NSubstitute) |
 | Unit | `Notifications.UnitTests` | Notification text built from an order outcome, e-mail status transitions, Null Object vs SMTP sender chosen by configuration |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against real PostgreSQL (Testcontainers); asserts order and outbox row are written atomically; enums written as strings on the raw body; token validation (401 without, with a foreign key, without claims); `IEventBus` faked |
+| Integration | `Inventory.IntegrationTests` | Written before the phase 13 refactor to pin the contract: `GET /api/stock` with and without `?sku=` (normalized, sorted, `quantityOnHand`), 400 over 100 SKUs, `PUT` 200 (reserved packs kept) / 400 / 404 with `code` / 401 / 403, and the registered `OrderPlaced` handler reserving all or nothing and staging `StockReserved` / `StockRejected` in the outbox; `IEventBus` faked |
 | Functional | `Gateway.Tests` | The real Gateway in memory (`WebApplicationFactory`, no backend): token issuing and its failure modes, 401 before proxying, 403 for the wrong role, CORS preflight allowed and refused |
 | Architecture | `Architecture.Tests` | Domain has no dependency on Application/Infrastructure or frameworks; Application has no dependency on Infrastructure, EF Core, ASP.NET Core, Service Bus or HTTP; command handlers are internal and sealed; controllers do not use Infrastructure |
 
@@ -270,7 +273,7 @@ push, and update the **Status** column and the phase notes below.
 | 10 | Documentation | ✅ Done | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
 | 11 | Mapperly | ✅ Done | Mapster replaced by Mapperly in Ordering and Inventory (mappers + projections), tests, ADR 0006 superseding 0005; project-level dotnet agent skills | `refactor(ordering,inventory): replace mapster with mapperly` |
 | 12 | Controllers | ✅ Done | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
-| 13 | Service layer | ⏳ Planned | Inventory moves from vertical slices to a classic layered service: `StockController` → `IStockService` → `StockService`, shared by the HTTP API and the `OrderPlaced` consumer; controller unit tests with NSubstitute; `Inventory.IntegrationTests` (Testcontainers) pinning the HTTP contract; ADR 0008 (amends 0002). HTTP and messaging contracts unchanged | `test(inventory): ...`, `refactor(inventory): ...`, `docs: ...` |
+| 13 | Service layer | ✅ Done | Inventory moves from vertical slices to a classic layered service: `StockController` → `IStockService` → `StockService`, shared by the HTTP API and the `OrderPlaced` consumer; controller unit tests with NSubstitute; `Inventory.IntegrationTests` (Testcontainers) pinning the HTTP contract; ADR 0008 (amends 0002). HTTP and messaging contracts unchanged | `test(inventory): ...`, `refactor(inventory): ...`, `docs: ...` |
 
 ### Phase notes
 
@@ -402,12 +405,16 @@ Decisions and facts discovered during implementation that the next phases depend
   - Tests: `Ordering.IntegrationTests` +1 (`PlaceOrder_KnownProducts_SerializesStatusAsString`, checked on the raw body because the typed test client also accepts numbers; checked to fail when the converter is removed).
   - Verified: 151 green before the change (baseline); after it, build clean and 152 green (136 fast + 16 integration). Live in Aspire: the Ordering and Inventory Postman collections pass with newman (29 requests, 75 assertions); raw bodies checked by hand (string enums, validation problems, `Stock.NotFound`, 202 + `Location`); the OpenAPI documents list the same operations, tags, responses and parameters.
   - Agent skills: the `dotnet/skills` plugins are declared in `.claude/settings.json` but must be installed once per machine (`claude plugin install dotnet-aspnetcore@dotnet-agent-skills`, etc.). This phase applied `dotnet-webapi` and `csharp-refactoring`, read from the local marketplace clone.
-- **Phase 13 (planned scope)**
-  - Goal: show the most common style in existing .NET codebases — MVC controller → service interface → implementation — in the one service where it also solves something: stock is changed by two entry points (HTTP and the `OrderPlaced` consumer).
-  - `IStockService` (public interface, one sealed `StockService`, registered `AddScoped<IStockService, StockService>()`) owns every stock operation: listing (Mapperly projection), setting the available quantity (returns `Result<StockResponse>`, commits) and reserving for an order (returns `ReservationOutcome`, **does not commit**: the consumer pipeline saves stock + outbox + inbox in one transaction). The difference is explicit in names and XML docs.
-  - One `StockController` replaces `GetStockController` / `UpdateStockController`; it depends only on `IStockService` (constructor injection). `StockReservation.Reserve` stays a pure function used by the service. Validators, `StockMapper`, `StockErrors` and the domain stay as they are.
-  - Tests: `Inventory.UnitTests` gains controller tests with NSubstitute (`IStockService` mocked — the database is never mocked); new `Inventory.IntegrationTests` (WebApplicationFactory + Testcontainers PostgreSQL, same setup as Ordering) written **before** the refactor to pin the contract: `GET /api/stock` with and without `?sku=`, 400 over 100 SKUs, `PUT` 200 / 400 / 404 / 401 / 403, and the `OrderPlaced` consumer reserving and staging `StockReserved` / `StockRejected`.
-  - Docs: ADR 0008, ADR 0002 and `CLAUDE.md` (Inventory is no longer vertical slice), README + README_pt, patterns table, testing table, CI (the new test project).
+- **Phase 13**
+  - Inventory moved from vertical slices to a service layer (ADR 0008, amends 0002): `StockController` → `IStockService` → `StockService`. Catalog is now the only vertical slice service. Folders are technical: `Controllers`, `Services`, `Contracts` (request/response records), `Validators`, `Mapping`, `Domain`, `Persistence`, `Messaging`. Files were moved with `git mv`, so their history follows them.
+  - `IStockService` is public (the public controller takes it); `StockService` is `internal sealed`, registered `AddScoped<IStockService, StockService>()` by `AddInventoryServices()` (which also adds `TimeProvider.System`). Operations: `GetStockAsync(skus)` (Mapperly projection, `AsNoTracking`), `UpdateQuantityAvailableAsync(sku, UpdateStockRequest)` → `Result<StockResponse>` (**saves**; the SKU comes from the route, the body is passed as is) and `StageReservationAsync(lines)` → `ReservationOutcome` (**does not save**). The verb carries the saving policy and the XML docs repeat it.
+  - `OrderPlacedIntegrationEventHandler` now depends on `IStockService` + `IOutbox` (no `DbContext`, no `TimeProvider`). It works because the service, the handler and the pipeline resolve the same scoped `InventoryDbContext`: the service changes tracked rows, the pipeline commits them with the outbox and inbox rows.
+  - Deleted: `GetStockHandler`, `UpdateStockHandler`, `GetStockController`, `UpdateStockController`, `StockApi`, `InventoryFeatures`. Unchanged in content: domain, `StockReservation.Reserve` (pure, called by the service), `StockErrors`, `StockMapper`, validators, `GetStockRequest` (still repeats `[FromQuery(Name = "sku")]` on the property for ApiExplorer), `UpdateStockRequest`, `StockResponse`.
+  - **Contract unchanged, and proven:** `Inventory.IntegrationTests` (13) was written and green against the slice code first, then passed without edits after the refactor. The OpenAPI document of Inventory was dumped before (worktree at `HEAD`) and after: same content and size; only the order of the two paths in `paths` changed.
+  - `Inventory.IntegrationTests`: `InventoryApiFactory` (WebApplicationFactory + Testcontainers `postgres:17-alpine`, consumers disabled, `IEventBus` faked), `TestTokens` (`ForAdmin`, `ForPointOfSale`). Tests that change stock seed a SKU of their own (`TEST-<guid>`), so they never depend on each other or on the seeded rows. The consumer tests resolve `IIntegrationEventHandler<OrderPlaced>` and save the scope like the pipeline does (same approach as Ordering's `StockOutcomeConsumerTests`).
+  - Controller unit tests (`Inventory.UnitTests/Controllers`, +4) mock `IStockService` with NSubstitute. `Problem(Error)` builds its body through `ProblemDetailsFactory`, so the test controller gets a `DefaultHttpContext` whose services come from `AddApiProblemDetails()` + `AddApiControllers()` (the real setup, not a fake factory).
+  - CI runs both integration projects in the Testcontainers step.
+  - Verified: build clean with warnings as errors (Debug and Release); 169 tests green (140 fast + 29 integration; was 152). Not run this phase: Aspire end-to-end and the Postman collections (the HTTP contract is pinned by the integration tests and the OpenAPI comparison).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values. docker-compose maps them to the settings each service reads, so every service block shows what it needs.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.

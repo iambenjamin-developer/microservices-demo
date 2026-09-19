@@ -47,7 +47,7 @@ Azure Service Bus (emulator)
 | **Gateway** | Minimal host + YARP | Single entry point: reverse proxy, demo token issuing, JWT validation, CORS, rate limiting | `POST /auth/token`, proxies `/api/*` |
 | **Catalog** | Vertical Slice | Beer products (SKU, name, style, volume, pack size, price) | `GET /api/products`, `GET /api/products/{id}`, `POST`/`PUT /api/products` (Admin) |
 | **Ordering** | Clean Architecture + DDD | Order lifecycle, volume discounts, publishes and consumes events | `POST /api/orders`, `GET /api/orders`, `GET /api/orders/{id}` |
-| **Inventory** | Vertical Slice | Stock per SKU, all-or-nothing reservation | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
+| **Inventory** | Service layer | Stock per SKU, all-or-nothing reservation | `GET /api/stock`, `PUT /api/stock/{sku}` (Admin) |
 | **Notifications** | Azure Function (isolated worker) | Records order outcomes, sends the e-mail, serves the panel | `GET /api/notifications` |
 | **Web** | React + Vite + TypeScript | Login, catalog, cart, orders with live status, notifications panel | — |
 
@@ -246,7 +246,8 @@ after 10 sign-ins in a minute.
 | Microservices + Database per Service | Catalog, Ordering, Inventory, Notifications | Independent deployment and data ownership |
 | API Gateway | [`src/Gateway`](src/Gateway) | Single entry point; auth, CORS and rate limiting in one place ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | The richest domain; dependencies point inward, enforced by architecture tests ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
-| Vertical Slice Architecture | Catalog, Inventory | CRUD-like services: one folder per feature, less ceremony |
+| Vertical Slice Architecture | [`src/Services/Catalog`](src/Services/Catalog) | CRUD-like service: one folder per feature, less ceremony |
+| Service layer (controller → service interface → implementation) | [`src/Services/Inventory`](src/Services/Inventory): `StockController` → `IStockService` → `StockService` | The most common style in existing .NET services; here it also gives the HTTP API and the `OrderPlaced` consumer one place that owns stock ([ADR 0008](docs/adr/0008-service-layer-for-inventory.md)) |
 | Minimal APIs and MVC controllers | Minimal APIs in Catalog and the Gateway, controllers in Ordering and Inventory | Both ASP.NET Core styles, with the same error and validation contract ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (lightweight) | Ordering | Writes go through the aggregate; reads are `AsNoTracking` projections that never load it |
 | Publish/Subscribe | Service Bus topics + filtered subscriptions | Temporal and spatial decoupling |
@@ -296,9 +297,10 @@ dotnet test microservices-demo.slnx
 |---|---|---|
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
 | Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, mapper values (in memory and projection) |
-| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values |
+| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values, `StockController` with `IStockService` mocked (NSubstitute) |
 | Unit | `Notifications.UnitTests` | Notification text, e-mail status transitions, Null Object vs SMTP sender by configuration |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against **real PostgreSQL** (Testcontainers): order and outbox row written atomically, stock outcomes confirm or reject the order (a late one is ignored, one for an unknown order is retried), per-customer reads, token validation |
+| Integration | `Inventory.IntegrationTests` | API + EF Core against **real PostgreSQL** (Testcontainers), written before the service layer refactor to pin its contract: stock list with and without `?sku=`, 400 over 100 SKUs, `PUT` 200 / 400 / 404 / 401 / 403, and the `OrderPlaced` consumer reserving all or nothing and staging `StockReserved` / `StockRejected` |
 | Functional | `Gateway.Tests` | The real Gateway in memory: token issuing, 401 before proxying, 403 for the wrong role, CORS preflight |
 | Architecture | `Architecture.Tests` | Ordering's layers only depend inward (NetArchTest) |
 
@@ -311,7 +313,7 @@ Frontend: `npm --prefix src/Web run lint` and `npm --prefix src/Web run build`.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on push and pull request to `main`:
 
 1. **backend** — .NET SDK from `global.json`, Release build with warnings as errors (code style included), unit,
-   architecture and Gateway tests, then the Testcontainers integration tests; `.trx` results are uploaded.
+   architecture and Gateway tests, then the Testcontainers integration tests (Ordering and Inventory); `.trx` results are uploaded.
 2. **frontend** — `npm ci`, lint, build.
 3. **docker** — needs both; builds the six images with Buildx and the GitHub Actions cache (no push).
 
@@ -333,7 +335,7 @@ src/
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice
 │  ├─ Ordering/Ordering.Domain | .Application | .Infrastructure | .Api   Clean Architecture
-│  └─ Inventory/Inventory.Api/          Vertical Slice
+│  └─ Inventory/Inventory.Api/          Service layer (controller → IStockService)
 ├─ Functions/Notifications/ Azure Function (isolated worker)
 └─ Web/                     React + Vite + TypeScript
 tests/                      Unit, integration, functional and architecture tests
