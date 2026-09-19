@@ -13,7 +13,7 @@ banco de dados real e CI.
 > Os dados do catálogo são fictícios (ex.: *Golden Lager 350ml*, *Amber Ale 600ml*), com uma homenagem a uma cerveja
 > famosa de desenho animado: *Duff-Style Classic Lager*.
 
-Read in English: [README.md](README.md). A documentação detalhada (`docs/`) está em inglês.
+Read in English: [README.md](README.md). Léelo en español: [README_es.md](README_es.md). A documentação detalhada (`docs/`) está em inglês.
 
 ## Conteúdo
 

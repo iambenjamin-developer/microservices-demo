@@ -12,7 +12,7 @@ dead-lettering, resilience pipelines, token validation in every service, tests a
 > Catalog data is fictional (e.g. *Golden Lager 350ml*, *Amber Ale 600ml*), with one nod to a famous cartoon beer:
 > *Duff-Style Classic Lager*.
 
-Leia em português: [README_pt.md](README_pt.md).
+Leia em português: [README_pt.md](README_pt.md). Léelo en español: [README_es.md](README_es.md).
 
 ## Contents
 
