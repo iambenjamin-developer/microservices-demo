@@ -249,6 +249,7 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | API Gateway | [`src/Gateway`](src/Gateway) | Ponto de entrada único; autenticação, CORS e rate limiting em um só lugar ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | O domínio mais rico; dependências apontam para dentro, garantido por testes de arquitetura ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
 | Vertical Slice Architecture | Catalog, Inventory | Serviços tipo CRUD: uma pasta por funcionalidade, menos cerimônia |
+| Minimal APIs e controllers MVC | Minimal APIs no Catalog e no Gateway, controllers no Ordering e no Inventory | Os dois estilos do ASP.NET Core, com o mesmo contrato de erros e validação ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (leve) | Ordering | Escritas passam pelo agregado; leituras são projeções `AsNoTracking` que nunca o carregam |
 | Publish/Subscribe | Tópicos do Service Bus + assinaturas filtradas | Desacoplamento temporal e espacial |
 | Saga por coreografia + compensação | O fluxo do pedido | Consistência eventual sem transações distribuídas ([ADR 0003](docs/adr/0003-choreography-over-orchestration.md)) |
@@ -283,7 +284,7 @@ depois o circuito abre e as seguintes falham rápido com 503 `Catalog.Unavailabl
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` (`Email:Enabled=false`), `NoDiscountPolicy` |
 | Result pattern | [`Result` / `Error`](src/BuildingBlocks/BuildingBlocks.Common/Results) mapeados para `ProblemDetails` (RFC 9457) |
-| Mapeamento de objetos | Mapster em Ordering e Inventory (`ProjectToType` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
+| Mapeamento de objetos | Mapperly em Ordering e Inventory (gerado em tempo de compilação, verificado pelo compilador, `ProjectToResponse()` → SQL); Catalog e Notifications mapeiam à mão de propósito ([ADR 0006](docs/adr/0006-object-mapping-mapperly.md), que substitui a [0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
 | Options pattern | `PricingOptions`, `CatalogClientOptions`, `OutboxOptions`, `JwtOptions`, `EmailOptions` (validadas na inicialização) |
 | Test Data Builder | [`OrderBuilder`](tests/Ordering.Domain.UnitTests/Builders/OrderBuilder.cs) |
 
@@ -296,8 +297,8 @@ dotnet test microservices-demo.slnx
 | Nível | Projeto | O quê |
 |---|---|---|
 | Unitário | `Ordering.Domain.UnitTests` | Invariantes do agregado, transições de estado, estratégias de desconto, value objects |
-| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, compilação estrita da config do Mapster |
-| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, config do Mapster |
+| Unitário | `Ordering.Application.UnitTests` | Handler de fazer pedido (snapshot do Catalog, SKU desconhecido, Catalog fora), decorator de validação, valores dos mappers (em memória e projeção) |
+| Unitário | `Inventory.UnitTests` | Regras de reserva tudo-ou-nada, valores dos mappers |
 | Unitário | `Notifications.UnitTests` | Texto da notificação, transições do status do e-mail, Null Object vs remetente SMTP por configuração |
 | Integração | `Ordering.IntegrationTests` | API + EF Core contra **PostgreSQL real** (Testcontainers): pedido e linha do outbox gravados atomicamente, resultados de estoque confirmam ou rejeitam o pedido (um atrasado é ignorado, um de pedido desconhecido é reprocessado), leituras por cliente, validação de token |
 | Funcional | `Gateway.Tests` | O Gateway real em memória: emissão de tokens, 401 antes do proxy, 403 para o papel errado, preflight de CORS |
@@ -330,7 +331,7 @@ src/
 │  ├─ BuildingBlocks.Common/     Result, Error
 │  ├─ BuildingBlocks.Contracts/  Eventos de integração + topologia do Service Bus
 │  ├─ BuildingBlocks.Messaging/  IEventBus, adapter do Service Bus, outbox, inbox, pipeline do consumidor
-│  └─ BuildingBlocks.Web/        ProblemDetails, filtro de validação, descoberta de endpoints, validação de JWT
+│  └─ BuildingBlocks.Web/        ProblemDetails, filtros de validação, descoberta de endpoints, configuração MVC, validação de JWT
 ├─ Gateway/                 YARP + emissão de tokens
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice

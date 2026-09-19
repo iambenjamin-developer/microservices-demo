@@ -13,6 +13,10 @@ public static class ProblemDetailsExtensions
     /// Every error response (handled or not) is an RFC 9457 <c>application/problem+json</c> body
     /// carrying the request instance and the trace id, so a client error can be found in the traces.
     /// </summary>
+    /// <remarks>
+    /// MVC's <c>ProblemDetailsFactory</c> applies the same customization, so minimal APIs and controllers
+    /// produce the same body.
+    /// </remarks>
     public static IServiceCollection AddApiProblemDetails(this IServiceCollection services) =>
         services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
         {
@@ -49,29 +53,13 @@ public static class ProblemDetailsExtensions
 
     public static ProblemHttpResult ToProblem(this Error error)
     {
-        var (statusCode, title, type) = error.Type switch
-        {
-            ErrorType.Validation => (StatusCodes.Status400BadRequest, "Bad Request", "https://tools.ietf.org/html/rfc9110#section-15.5.1"),
-            ErrorType.Unauthorized => (StatusCodes.Status401Unauthorized, "Unauthorized", "https://tools.ietf.org/html/rfc9110#section-15.5.2"),
-            ErrorType.NotFound => (StatusCodes.Status404NotFound, "Not Found", "https://tools.ietf.org/html/rfc9110#section-15.5.5"),
-            ErrorType.Conflict => (StatusCodes.Status409Conflict, "Conflict", "https://tools.ietf.org/html/rfc9110#section-15.5.10"),
-            ErrorType.Unavailable => (StatusCodes.Status503ServiceUnavailable, "Service Unavailable", "https://tools.ietf.org/html/rfc9110#section-15.6.4"),
-            _ => (StatusCodes.Status500InternalServerError, "Internal Server Error", "https://tools.ietf.org/html/rfc9110#section-15.6.1"),
-        };
-
-        var extensions = new Dictionary<string, object?> { ["code"] = error.Code };
-
-        // Same "errors" shape as the ValidationProblem returned by the request validation filter.
-        if (error is ValidationError validationError)
-        {
-            extensions["errors"] = validationError.Errors;
-        }
+        var problem = ErrorProblem.From(error);
 
         return TypedResults.Problem(
-            statusCode: statusCode,
-            title: title,
-            type: type,
+            statusCode: problem.StatusCode,
+            title: problem.Title,
+            type: problem.Type,
             detail: error.Description,
-            extensions: extensions);
+            extensions: problem.Extensions);
     }
 }

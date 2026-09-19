@@ -1,6 +1,5 @@
-using System.Text.Json.Serialization;
 using BuildingBlocks.Web.Authentication;
-using BuildingBlocks.Web.Endpoints;
+using BuildingBlocks.Web.Mvc;
 using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using Ordering.Api.Customers;
@@ -26,10 +25,8 @@ builder.Services.AddScoped<IAccessTokenProvider, HttpContextAccessTokenProvider>
 
 builder.Services.AddApiProblemDetails();
 builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
-builder.Services.AddEndpoints(typeof(Program).Assembly);
+builder.Services.AddApiControllers();
 
 var app = builder.Build();
 
@@ -45,7 +42,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapDefaultEndpoints();
-app.MapEndpoints();
+app.MapControllers();
 
 await app.Services.MigrateOrderingDatabaseAsync();
 await app.RunAsync();

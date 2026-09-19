@@ -247,6 +247,7 @@ after 10 sign-ins in a minute.
 | API Gateway | [`src/Gateway`](src/Gateway) | Single entry point; auth, CORS and rate limiting in one place ([ADR 0004](docs/adr/0004-yarp-as-api-gateway.md)) |
 | Clean Architecture | [`src/Services/Ordering`](src/Services/Ordering) | The richest domain; dependencies point inward, enforced by architecture tests ([ADR 0002](docs/adr/0002-architecture-style-per-service.md)) |
 | Vertical Slice Architecture | Catalog, Inventory | CRUD-like services: one folder per feature, less ceremony |
+| Minimal APIs and MVC controllers | Minimal APIs in Catalog and the Gateway, controllers in Ordering and Inventory | Both ASP.NET Core styles, with the same error and validation contract ([ADR 0007](docs/adr/0007-controllers-for-inventory-and-ordering.md)) |
 | CQRS (lightweight) | Ordering | Writes go through the aggregate; reads are `AsNoTracking` projections that never load it |
 | Publish/Subscribe | Service Bus topics + filtered subscriptions | Temporal and spatial decoupling |
 | Choreography Saga + compensation | The order flow | Eventual consistency without distributed transactions ([ADR 0003](docs/adr/0003-choreography-over-orchestration.md)) |
@@ -281,7 +282,7 @@ after 10 sign-ins in a minute.
 | Adapter | `IEventBus` → `AzureServiceBusEventBus`; `IEmailSender` → `SmtpEmailSender` (MailKit) |
 | Null Object | `NoOpEmailSender` (`Email:Enabled=false`), `NoDiscountPolicy` |
 | Result pattern | [`Result` / `Error`](src/BuildingBlocks/BuildingBlocks.Common/Results) mapped to RFC 9457 `ProblemDetails` |
-| Object mapping | Mapster in Ordering and Inventory (`ProjectToType` → SQL); Catalog and Notifications map by hand on purpose ([ADR 0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
+| Object mapping | Mapperly in Ordering and Inventory (source-generated, compile-time checked, `ProjectToResponse()` → SQL); Catalog and Notifications map by hand on purpose ([ADR 0006](docs/adr/0006-object-mapping-mapperly.md), superseding [0005](docs/adr/0005-object-mapping-mapster-and-manual.md)) |
 | Options pattern | `PricingOptions`, `CatalogClientOptions`, `OutboxOptions`, `JwtOptions`, `EmailOptions` (validated on start) |
 | Test Data Builder | [`OrderBuilder`](tests/Ordering.Domain.UnitTests/Builders/OrderBuilder.cs) |
 
@@ -294,8 +295,8 @@ dotnet test microservices-demo.slnx
 | Level | Project | What |
 |---|---|---|
 | Unit | `Ordering.Domain.UnitTests` | Aggregate invariants, state transitions, discount strategies, value objects |
-| Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, strict Mapster config compile |
-| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, Mapster config |
+| Unit | `Ordering.Application.UnitTests` | Place-order handler (Catalog snapshot, unknown SKU, Catalog down), validation decorator, mapper values (in memory and projection) |
+| Unit | `Inventory.UnitTests` | All-or-nothing reservation rules, mapper values |
 | Unit | `Notifications.UnitTests` | Notification text, e-mail status transitions, Null Object vs SMTP sender by configuration |
 | Integration | `Ordering.IntegrationTests` | API + EF Core against **real PostgreSQL** (Testcontainers): order and outbox row written atomically, stock outcomes confirm or reject the order (a late one is ignored, one for an unknown order is retried), per-customer reads, token validation |
 | Functional | `Gateway.Tests` | The real Gateway in memory: token issuing, 401 before proxying, 403 for the wrong role, CORS preflight |
@@ -327,7 +328,7 @@ src/
 │  ├─ BuildingBlocks.Common/     Result, Error
 │  ├─ BuildingBlocks.Contracts/  Integration events + Service Bus topology
 │  ├─ BuildingBlocks.Messaging/  IEventBus, Service Bus adapter, outbox, inbox, consumer pipeline
-│  └─ BuildingBlocks.Web/        ProblemDetails, validation filter, endpoint discovery, JWT validation
+│  └─ BuildingBlocks.Web/        ProblemDetails, validation filters, endpoint discovery, MVC setup, JWT validation
 ├─ Gateway/                 YARP + token issuing
 ├─ Services/
 │  ├─ Catalog/Catalog.Api/              Vertical Slice

@@ -60,8 +60,7 @@
 
   <!-- Application layer: object mapping and abstractions -->
   <ItemGroup>
-    <PackageVersion Include="Mapster" Version="10.0.12" />
-    <PackageVersion Include="Mapster.DependencyInjection" Version="10.0.12" />
+    <PackageVersion Include="Riok.Mapperly" Version="4.3.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.12" />
   </ItemGroup>

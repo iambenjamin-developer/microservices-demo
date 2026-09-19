@@ -1,4 +1,4 @@
-namespace Ordering.Api.Endpoints.Orders;
+namespace Ordering.Api.Controllers;
 
 /// <summary>
 /// Body of <c>POST /api/orders</c>: SKUs and quantities (packs) only. Prices come from Catalog and the customer

@@ -60,6 +60,23 @@ public sealed class PlaceOrderTests(OrderingApiFactory factory)
     }
 
     [Fact]
+    public async Task PlaceOrder_KnownProducts_SerializesStatusAsString()
+    {
+        // The typed client accepts numbers and strings alike, so the wire format is checked on the raw body:
+        // controllers use MVC's JSON options, not the minimal API ones, and must still write enums as strings.
+        using var client = OrderingApi.CreateClient(factory, OrderingApi.NewCustomerId());
+
+        var response = await client.PostAsJsonAsync(
+            "/api/orders",
+            new { items = new[] { new { sku = "GOLDEN-LAGER-350", quantity = 1 } } },
+            TestContext.Current.CancellationToken);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        body.RootElement.GetProperty("status").GetString().ShouldBe("Pending");
+    }
+
+    [Fact]
     public async Task PlaceOrder_UnknownSku_Returns400AndSavesNothing()
     {
         var customerId = OrderingApi.NewCustomerId();
