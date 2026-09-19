@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace Inventory.Api.Features.Stock.GetStock;
+namespace Inventory.Api.Contracts;
 
 /// <param name="Skus">Optional filter (<c>?sku=A&amp;sku=B</c>), so a client can check only the SKUs in its cart.</param>
 /// <remarks>

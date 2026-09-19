@@ -3,9 +3,9 @@ using BuildingBlocks.Web.Mvc;
 using BuildingBlocks.Web.OpenApi;
 using BuildingBlocks.Web.Results;
 using FluentValidation;
-using Inventory.Api.Features;
 using Inventory.Api.Messaging;
 using Inventory.Api.Persistence;
+using Inventory.Api.Services;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,7 +24,7 @@ builder.Services.AddApiProblemDetails();
 builder.Services.AddOpenApi(options => options.AddBearerSecurityScheme());
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>(includeInternalTypes: true);
-builder.Services.AddInventoryFeatures();
+builder.Services.AddInventoryServices();
 builder.Services.AddApiControllers();
 
 var app = builder.Build();

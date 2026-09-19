@@ -1,4 +1,4 @@
-namespace Inventory.Api.Features.Stock.UpdateStock;
+namespace Inventory.Api.Contracts;
 
 /// <summary>
 /// Replenishment: sets how many packs are available for sale. Reserved packs are not part of the request —

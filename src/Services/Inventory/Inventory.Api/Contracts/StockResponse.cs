@@ -1,4 +1,4 @@
-namespace Inventory.Api.Features.Stock;
+namespace Inventory.Api.Contracts;
 
 /// <summary>
 /// The stock of one SKU. The SKU, not a surrogate id, is the resource key: it is the identity other

@@ -1,6 +1,7 @@
 using FluentValidation;
+using Inventory.Api.Contracts;
 
-namespace Inventory.Api.Features.Stock.GetStock;
+namespace Inventory.Api.Validators;
 
 internal sealed class GetStockValidator : AbstractValidator<GetStockRequest>
 {

@@ -1,5 +1,6 @@
 using Inventory.Api.Domain;
-using Inventory.Api.Features.Stock;
+using Inventory.Api.Contracts;
+using Inventory.Api.Mapping;
 
 namespace Inventory.UnitTests.Mapping;
 

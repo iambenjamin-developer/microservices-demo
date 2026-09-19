@@ -1,7 +1,8 @@
+using Inventory.Api.Contracts;
 using Inventory.Api.Domain;
 using Riok.Mapperly.Abstractions;
 
-namespace Inventory.Api.Features.Stock;
+namespace Inventory.Api.Mapping;
 
 /// <summary>
 /// Mapperly mappings for the stock area, generated at compile time. Mappings only go entity → DTO: stock rows are

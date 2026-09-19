@@ -1,6 +1,7 @@
 using FluentValidation;
+using Inventory.Api.Contracts;
 
-namespace Inventory.Api.Features.Stock.UpdateStock;
+namespace Inventory.Api.Validators;
 
 internal sealed class UpdateStockValidator : AbstractValidator<UpdateStockRequest>
 {
