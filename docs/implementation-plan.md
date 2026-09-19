@@ -270,6 +270,7 @@ push, and update the **Status** column and the phase notes below.
 | 10 | Documentation | ✅ Done | `README.md` (patterns, how to run, demo script), `job-requirements.md`, ADRs, `ai-workflow.md`, then `README_pt.md` | `docs: ...` |
 | 11 | Mapperly | ✅ Done | Mapster replaced by Mapperly in Ordering and Inventory (mappers + projections), tests, ADR 0006 superseding 0005; project-level dotnet agent skills | `refactor(ordering,inventory): replace mapster with mapperly` |
 | 12 | Controllers | ✅ Done | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
+| 13 | Service layer | ⏳ Planned | Inventory moves from vertical slices to a classic layered service: `StockController` → `IStockService` → `StockService`, shared by the HTTP API and the `OrderPlaced` consumer; controller unit tests with NSubstitute; `Inventory.IntegrationTests` (Testcontainers) pinning the HTTP contract; ADR 0008 (amends 0002). HTTP and messaging contracts unchanged | `test(inventory): ...`, `refactor(inventory): ...`, `docs: ...` |
 
 ### Phase notes
 
@@ -401,6 +402,12 @@ Decisions and facts discovered during implementation that the next phases depend
   - Tests: `Ordering.IntegrationTests` +1 (`PlaceOrder_KnownProducts_SerializesStatusAsString`, checked on the raw body because the typed test client also accepts numbers; checked to fail when the converter is removed).
   - Verified: 151 green before the change (baseline); after it, build clean and 152 green (136 fast + 16 integration). Live in Aspire: the Ordering and Inventory Postman collections pass with newman (29 requests, 75 assertions); raw bodies checked by hand (string enums, validation problems, `Stock.NotFound`, 202 + `Location`); the OpenAPI documents list the same operations, tags, responses and parameters.
   - Agent skills: the `dotnet/skills` plugins are declared in `.claude/settings.json` but must be installed once per machine (`claude plugin install dotnet-aspnetcore@dotnet-agent-skills`, etc.). This phase applied `dotnet-webapi` and `csharp-refactoring`, read from the local marketplace clone.
+- **Phase 13 (planned scope)**
+  - Goal: show the most common style in existing .NET codebases — MVC controller → service interface → implementation — in the one service where it also solves something: stock is changed by two entry points (HTTP and the `OrderPlaced` consumer).
+  - `IStockService` (public interface, one sealed `StockService`, registered `AddScoped<IStockService, StockService>()`) owns every stock operation: listing (Mapperly projection), setting the available quantity (returns `Result<StockResponse>`, commits) and reserving for an order (returns `ReservationOutcome`, **does not commit**: the consumer pipeline saves stock + outbox + inbox in one transaction). The difference is explicit in names and XML docs.
+  - One `StockController` replaces `GetStockController` / `UpdateStockController`; it depends only on `IStockService` (constructor injection). `StockReservation.Reserve` stays a pure function used by the service. Validators, `StockMapper`, `StockErrors` and the domain stay as they are.
+  - Tests: `Inventory.UnitTests` gains controller tests with NSubstitute (`IStockService` mocked — the database is never mocked); new `Inventory.IntegrationTests` (WebApplicationFactory + Testcontainers PostgreSQL, same setup as Ordering) written **before** the refactor to pin the contract: `GET /api/stock` with and without `?sku=`, 400 over 100 SKUs, `PUT` 200 / 400 / 404 / 401 / 403, and the `OrderPlaced` consumer reserving and staging `StockReserved` / `StockRejected`.
+  - Docs: ADR 0008, ADR 0002 and `CLAUDE.md` (Inventory is no longer vertical slice), README + README_pt, patterns table, testing table, CI (the new test project).
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values. docker-compose maps them to the settings each service reads, so every service block shows what it needs.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
@@ -428,6 +435,7 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 5. `0005-object-mapping-mapster-and-manual.md` — Mapster (MIT, `ProjectToType` SQL projections) vs AutoMapper (commercial license) vs hand-written mapping; why Catalog stays manual and why mappings never create aggregates. *Superseded by 0006.*
 6. `0006-object-mapping-mapperly.md` — Mapperly (source-generated, compile-time checked, `IQueryable` projections from the same config) replaces Mapster in Ordering and Inventory.
 7. `0007-controllers-for-inventory-and-ordering.md` — MVC controllers for Inventory and Ordering, minimal APIs for Catalog and the Gateway, one error/validation contract for both.
+8. `0008-service-layer-for-inventory.md` — Inventory uses a service layer (`IStockService`) instead of vertical slices, to show the controller + service interface style next to Catalog's slices and Ordering's CQRS handlers; amends 0002.
 
 ## 11. Demo script (5–10 minutes)
 
