@@ -9,7 +9,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 
 ## Conventions
 
-- **Language:** all code, comments, commit messages and documentation are in English. The only exceptions are the README translations: `README_pt.md` (Portuguese) and `README_es.md` (Spanish).
+- **Language:** all code, comments, commit messages and documentation are in English. The only exceptions are the README translations: `README_pt.md` (Portuguese) and `README_es.md` (Spanish), and the Spanish interview practice guide `docs/faq_es.md`. When code quoted in `docs/faq_es.md` changes, update the snippet (and its `#L` line link) in the same commit.
 - **Commits:** Conventional Commits (`feat(ordering): ...`, `test: ...`, `docs: ...`), small and focused.
 - **Workflow:** implement one phase at a time (one session per phase); stop at the end of each phase for human review before committing. When a phase is approved, update its Status and Phase notes in `docs/implementation-plan.md` in the same commit.
 - **Catalog data is fictional.** Do not use real beer brands.
