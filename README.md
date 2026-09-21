@@ -353,6 +353,7 @@ Build hygiene: SDK pinned in `global.json`; nullable, warnings as errors and cod
 | [docs/job-requirements.md](docs/job-requirements.md) | Every requirement of the role mapped to the code that demonstrates it |
 | [docs/adr](docs/adr) | Architecture Decision Records |
 | [docs/ai-workflow.md](docs/ai-workflow.md) | How the project was built with an AI assistant, and what stayed with the human |
+| [docs/faq_es.md](docs/faq_es.md) | Interview practice guide in Spanish: questions and answers by level (from non-programmer to architect), each with the code behind it |
 | [docs/postman](docs/postman) | Postman collections and how to run them |
 | [CLAUDE.md](CLAUDE.md) | The conventions and architecture rules, written for AI assistants (and humans) |
 

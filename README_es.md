@@ -14,7 +14,7 @@ contra una base de datos real y CI.
 > famosa de dibujos animados: *Duff-Style Classic Lager*.
 
 Read in English: [README.md](README.md). Leia em português: [README_pt.md](README_pt.md). La documentación detallada
-(`docs/`) está en inglés.
+(`docs/`) está en inglés, salvo la [guía de entrevista](docs/faq_es.md), escrita en español.
 
 ## Contenido
 
@@ -359,6 +359,7 @@ Package Management).
 | [docs/job-requirements.md](docs/job-requirements.md) | Cada requisito del puesto mapeado al código que lo demuestra |
 | [docs/adr](docs/adr) | Architecture Decision Records |
 | [docs/ai-workflow.md](docs/ai-workflow.md) | Cómo se construyó el proyecto con un asistente de IA y qué quedó en manos del humano |
+| [docs/faq_es.md](docs/faq_es.md) | Guía de entrevista en español: preguntas y respuestas por nivel (de cero programación a arquitecto), con el código de cada respuesta |
 | [docs/postman](docs/postman) | Colecciones Postman y cómo ejecutarlas |
 | [CLAUDE.md](CLAUDE.md) | Las convenciones y reglas de arquitectura, escritas para asistentes de IA (y para humanos) |
 

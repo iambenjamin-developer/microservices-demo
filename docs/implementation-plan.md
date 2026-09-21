@@ -199,6 +199,7 @@ microservices-demo/
 │  ├─ postman/                      One collection per service (with tests) + local environment
 │  ├─ job-requirements.md
 │  ├─ ai-workflow.md
+│  ├─ faq_es.md                     Interview practice guide (Spanish)
 │  └─ adr/
 ├─ .github/workflows/ci.yml
 ├─ docker-compose.yml
@@ -386,6 +387,7 @@ Decisions and facts discovered during implementation that the next phases depend
   - `docs/ai-workflow.md` describes the process: plan first, `CLAUDE.md` conventions backed by mechanical checks, one session per phase with the repository as memory, the review loop, the problems found only by running the system (taken from these phase notes), and what stayed with the human.
   - `README_pt.md` is a Portuguese (pt-BR) translation of `README.md` only; it links to the English `docs/`. Both READMEs link to each other. When `README.md` changes, `README_pt.md` must be updated in the same commit.
   - `README_es.md` (added 2026-09-19, after phase 11) is a Spanish translation of `README.md` under the same rules: it links to the English `docs/`, all three READMEs link to each other, and it is updated in the same commit as `README.md`.
+  - `docs/faq_es.md` (added 2026-09-21) is an interview practice guide in Spanish, the only non-English file in `docs/` (exception recorded in `CLAUDE.md`). Questions go from level 0 (no programming) through junior, semi-senior and senior to architect; every answer links to the code (`#L` line anchors) and quotes a real snippet. The one hypothetical snippet (Dapper) is labeled as such. When quoted code changes, the snippet and its line link are updated in the same commit.
   - The CI note in both READMEs and in the requirements map says the first GitHub run is still pending (billing lock, see phase 9); remove it once the workflow is green. Removed on 2026-09-19 after the first green run.
 - **Phase 11**
   - `Riok.Mapperly` replaces `Mapster` + `Mapster.DependencyInjection` (ADR 0006; 0005 marked superseded). Referenced with `ExcludeAssets="runtime" PrivateAssets="all"`: only the generator and its attributes, nothing at runtime.

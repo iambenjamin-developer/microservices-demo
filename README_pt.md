@@ -13,7 +13,7 @@ banco de dados real e CI.
 > Os dados do catálogo são fictícios (ex.: *Golden Lager 350ml*, *Amber Ale 600ml*), com uma homenagem a uma cerveja
 > famosa de desenho animado: *Duff-Style Classic Lager*.
 
-Read in English: [README.md](README.md). Léelo en español: [README_es.md](README_es.md). A documentação detalhada (`docs/`) está em inglês.
+Read in English: [README.md](README.md). Léelo en español: [README_es.md](README_es.md). A documentação detalhada (`docs/`) está em inglês, exceto o [guia de entrevista](docs/faq_es.md), escrito em espanhol.
 
 ## Conteúdo
 
@@ -356,6 +356,7 @@ Management).
 | [docs/job-requirements.md](docs/job-requirements.md) | Cada requisito da vaga mapeado para o código que o demonstra |
 | [docs/adr](docs/adr) | Architecture Decision Records |
 | [docs/ai-workflow.md](docs/ai-workflow.md) | Como o projeto foi construído com um assistente de IA e o que ficou com o humano |
+| [docs/faq_es.md](docs/faq_es.md) | Guia de entrevista em espanhol: perguntas e respostas por nível (de quem não programa a arquiteto), cada uma com o código correspondente |
 | [docs/postman](docs/postman) | Coleções Postman e como executá-las |
 | [CLAUDE.md](CLAUDE.md) | Convenções e regras de arquitetura, escritas para assistentes de IA (e para humanos) |
 
