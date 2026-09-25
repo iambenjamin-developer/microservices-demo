@@ -22,8 +22,9 @@ var orderingDb = postgres.AddDatabase("orderingdb");
 var inventoryDb = postgres.AddDatabase("inventorydb");
 var notificationsDb = postgres.AddDatabase("notificationsdb");
 
-// Azure Service Bus: the local emulator by default, or a real namespace that Aspire provisions when
-// Messaging:Broker is "Azure" (launch profile "https-azure"). The topology is the same in both.
+// Azure Service Bus: the local emulator by default, a real namespace that Aspire provisions when
+// Messaging:Broker is "Azure" (launch profile "https-azure"), or an existing namespace given by its
+// connection string when it is "ConnectionString" (launch profile "https-connectionstring").
 var serviceBus = builder.AddMessaging(ContainerPrefix);
 
 // Mail catcher: Mailpit speaks real SMTP and shows every message it receives in a web UI, so the demo can show
@@ -83,7 +84,7 @@ var notifications = builder.AddAzureFunctionsProject<Projects.Notifications>("no
     .WithHostStorage(functionsStorage)
     .WithReference(notificationsDb)
     .WaitFor(notificationsDb)
-    .WithReference(serviceBus)
+    .WithMessagingReference(serviceBus)
     .WaitFor(serviceBus)
     .WaitFor(mailpit)
     .WithEnvironment("Email__Host", mailpitSmtp.Property(EndpointProperty.Host))

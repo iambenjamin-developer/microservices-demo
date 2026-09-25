@@ -13,6 +13,12 @@ internal enum ServiceBusBroker
 
     /// <summary>A real namespace that Aspire provisions in the subscription configured under <c>Azure:*</c>.</summary>
     Azure,
+
+    /// <summary>
+    /// An existing namespace reached through <c>ConnectionStrings:messaging</c> in the AppHost user-secrets. Aspire
+    /// creates nothing: the topology is applied once with <c>tools/servicebus-provision.cs</c>.
+    /// </summary>
+    ConnectionString,
 }
 
 internal static class MessagingResourceExtensions
@@ -26,15 +32,26 @@ internal static class MessagingResourceExtensions
     public const string ComposeAuthorizationRuleName = "compose";
 
     /// <summary>
-    /// Adds the Service Bus resource, backed by the emulator or by a real Azure namespace, with the topology from
-    /// <see cref="Topology"/>. The services only ever see the <c>messaging</c> connection, so switching brokers is
-    /// an infrastructure decision made here and never a branch in their code.
+    /// Adds the Service Bus resource: the emulator, a namespace Aspire provisions, or an existing namespace given by
+    /// its connection string. The services only ever see the <c>messaging</c> connection, so switching brokers is an
+    /// infrastructure decision made here and never a branch in their code.
     /// </summary>
-    public static IResourceBuilder<AzureServiceBusResource> AddMessaging(
+    /// <remarks>
+    /// Reference it from an Azure Functions project with <see cref="WithMessagingReference"/>, not <c>WithReference</c>.
+    /// </remarks>
+    public static IResourceBuilder<IResourceWithConnectionString> AddMessaging(
         this IDistributedApplicationBuilder builder,
         string containerPrefix)
     {
         var broker = GetBroker(builder.Configuration);
+
+        if (broker == ServiceBusBroker.ConnectionString)
+        {
+            // Read from ConnectionStrings:messaging in the AppHost configuration (user-secrets). It is a secret
+            // parameter: masked in the dashboard, and asked for there if it is missing.
+            return builder.AddConnectionString(Topology.ServiceBusConnectionName);
+        }
+
         var serviceBus = builder.AddAzureServiceBus(Topology.ServiceBusConnectionName);
 
         if (broker == ServiceBusBroker.Emulator)
@@ -47,8 +64,21 @@ internal static class MessagingResourceExtensions
         }
 
         AddTopology(serviceBus);
-        return serviceBus;
+        return builder.CreateResourceBuilder<IResourceWithConnectionString>(serviceBus.Resource);
     }
+
+    /// <summary>
+    /// References the <c>messaging</c> resource from an Azure Functions project. For a Service Bus resource it uses the
+    /// Functions-specific overload, which injects <c>messaging__fullyQualifiedNamespace</c> for a provisioned namespace;
+    /// the generic <c>WithReference</c> would compile but inject only an endpoint the trigger cannot use. A plain
+    /// connection string is injected as <c>ConnectionStrings__messaging</c>, which the trigger reads as it is.
+    /// </summary>
+    public static IResourceBuilder<AzureFunctionsProjectResource> WithMessagingReference(
+        this IResourceBuilder<AzureFunctionsProjectResource> functions,
+        IResourceBuilder<IResourceWithConnectionString> messaging) =>
+        messaging.Resource is AzureServiceBusResource serviceBus
+            ? functions.WithReference(functions.ApplicationBuilder.CreateResourceBuilder(serviceBus))
+            : functions.WithReference(messaging);
 
     private static ServiceBusBroker GetBroker(IConfiguration configuration)
     {
@@ -118,7 +148,7 @@ internal static class MessagingResourceExtensions
                 topic.AddServiceBusSubscription($"{definition.Topic}-{definition.Name}", definition.Name)
                     .WithProperties(subscription =>
                     {
-                        subscription.MaxDeliveryCount = 5;
+                        subscription.MaxDeliveryCount = Topology.MaxDeliveryCount;
                         subscription.DeadLetteringOnMessageExpiration = true;
 
                         // One correlation rule per event name: rules are OR-ed, so the subscription
