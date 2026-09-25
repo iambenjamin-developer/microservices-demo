@@ -141,6 +141,7 @@ Qué lo hace confiable:
 - Docker Desktop en ejecución, con **≥ 6 GB de RAM** (el emulador de Service Bus necesita un contenedor de SQL Server)
 - Node.js 22+
 - Azure Functions Core Tools v4 (`npm i -g azure-functions-core-tools@4`) — solo para el camino con Aspire
+- Azure CLI y una suscripción de Azure — solo para usar un Service Bus real (opcional, ver abajo)
 
 ### Opción A — .NET Aspire (desarrollo)
 
@@ -202,6 +203,38 @@ Por defecto todo e-mail queda capturado en Mailpit. Para entregarlo por Gmail, c
 `Email:Port=587`, `Email:UseStartTls=true` y una **contraseña de aplicación** de Gmail, y apunta
 `DemoUsers:bar:Email` a una casilla real. El [`.env.example`](.env.example) muestra las variables exactas;
 `Email:Enabled=false` cambia al remitente Null Object (la notificación se sigue guardando, no se envía nada).
+
+### Azure Service Bus real (opcional)
+
+El emulador es el valor por defecto. Los servicios solo leen la conexión `messaging`, así que pasar a un namespace
+real es una decisión de infraestructura que se toma en el AppHost o en `.env`
+([ADR 0009](docs/adr/0009-switchable-service-bus-broker.md)).
+
+**Aspire.** Aspire aprovisiona un namespace Standard con los topics, subscriptions y filtros de `Topology.cs`, y le da
+a tu cuenta de Azure el rol *Azure Service Bus Data Owner* sobre él: no interviene ninguna clave. Una sola vez:
+
+```bash
+az login
+dotnet user-secrets --project src/AppHost set Azure:SubscriptionId <subscription-id>
+dotnet user-secrets --project src/AppHost set Azure:Location <región, p. ej. westeurope>
+dotnet user-secrets --project src/AppHost set Azure:CredentialSource AzureCli
+```
+
+Luego ejecuta con el perfil `https-azure` (fija `Messaging:Broker=Azure`; los perfiles por defecto siguen en el
+emulador):
+
+```bash
+dotnet run --project src/AppHost --launch-profile https-azure
+```
+
+**docker-compose.** Ejecuta Aspire en modo Azure una vez para que exista el namespace, lee la clave de su política
+`compose` (solo envío/escucha) y cambia las dos líneas de Service Bus de `.env` a la Opción B
+([`.env.example`](.env.example)): `COMPOSE_PROFILES=` (el emulador no arranca) y
+`SERVICEBUS_CONNECTION=<connection string de compose>`.
+
+**Costo.** El namespace se factura mientras exista. Borra el resource group que creó Aspire al terminar
+(`az group delete --name <rg>`). [`tools/servicebus-smoke.cs`](tools/servicebus-smoke.cs) puede inspeccionarlo con
+`SERVICEBUS_NAMESPACE=<namespace>.servicebus.windows.net`.
 
 ### Postman
 
