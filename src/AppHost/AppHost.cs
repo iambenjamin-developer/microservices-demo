@@ -1,5 +1,4 @@
-using Aspire.Hosting.Azure;
-using BuildingBlocks.Contracts;
+using AppHost;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -23,46 +22,9 @@ var orderingDb = postgres.AddDatabase("orderingdb");
 var inventoryDb = postgres.AddDatabase("inventorydb");
 var notificationsDb = postgres.AddDatabase("notificationsdb");
 
-// Azure Service Bus emulator. Topics, subscriptions and filters come from the shared Topology,
-// so the infrastructure and the code can never disagree about names.
-var serviceBus = builder.AddAzureServiceBus(Topology.ServiceBusConnectionName)
-    .RunAsEmulator(emulator => emulator
-        .WithContainerName($"{ContainerPrefix}servicebus")
-        .WithHostPort(5672) // fixed AMQP port so local tools (tools/servicebus-smoke.cs) can connect
-        .WithLifetime(ContainerLifetime.Persistent));
-
-// The emulator stores its state in a SQL Server sidecar that Aspire adds as "<name>-mssql".
-// It is not exposed by RunAsEmulator, so look it up in the model to rename its container too.
-var serviceBusSql = builder.Resources.OfType<ContainerResource>()
-    .SingleOrDefault(r => r.Name == $"{serviceBus.Resource.Name}-mssql")
-    ?? throw new InvalidOperationException("Service Bus emulator SQL Server sidecar not found.");
-builder.CreateResourceBuilder(serviceBusSql).WithContainerName($"{ContainerPrefix}servicebus-sql");
-
-foreach (var topicSubscriptions in Topology.SubscriptionDefinitions.GroupBy(s => s.Topic))
-{
-    var topic = serviceBus.AddServiceBusTopic(topicSubscriptions.Key);
-
-    foreach (var definition in topicSubscriptions)
-    {
-        topic.AddServiceBusSubscription($"{definition.Topic}-{definition.Name}", definition.Name)
-            .WithProperties(subscription =>
-            {
-                subscription.MaxDeliveryCount = 5;
-                subscription.DeadLetteringOnMessageExpiration = true;
-
-                // One correlation rule per event name: rules are OR-ed, so the subscription
-                // only receives the events its consumer handles.
-                foreach (var subject in definition.Subjects)
-                {
-                    subscription.Rules.Add(new AzureServiceBusRule(subject)
-                    {
-                        FilterType = AzureServiceBusFilterType.CorrelationFilter,
-                        CorrelationFilter = new AzureServiceBusCorrelationFilter { Subject = subject },
-                    });
-                }
-            });
-    }
-}
+// Azure Service Bus: the local emulator by default, or a real namespace that Aspire provisions when
+// Messaging:Broker is "Azure" (launch profile "https-azure"). The topology is the same in both.
+var serviceBus = builder.AddMessaging(ContainerPrefix);
 
 // Mail catcher: Mailpit speaks real SMTP and shows every message it receives in a web UI, so the demo can show
 // an e-mail leaving the system without anybody owning a mail account. Swapping Email:Host/Port for Gmail is enough
