@@ -25,11 +25,21 @@ The code did not have to change for it. Ordering and Inventory (`AddServiceBusMe
     `Azure:CredentialSource`). It assigns *Azure Service Bus Data Owner* to the developer running it, and injects
     the namespace endpoint instead of a connection string: the services and the function authenticate with Entra ID
     (`DefaultAzureCredential`, i.e. `az login`) and hold no key.
+  - `ConnectionString`: an **existing** namespace (e.g. created by hand in the portal) reached through
+    `ConnectionStrings:messaging` in the AppHost user-secrets (`AddConnectionString`, a secret parameter). Aspire
+    creates nothing in Azure; every consumer, the function included, gets the string as `ConnectionStrings__messaging`.
   - Any other value fails at startup.
-  - The launch profile `https-azure` sets `Messaging__Broker=Azure`, so switching is choosing a profile.
-- **Same topology in both.** The loop over `Topology.SubscriptionDefinitions` (topics, subscriptions,
-  `MaxDeliveryCount = 5`, one correlation rule per `Subject`) runs for either broker; the generated Bicep contains
-  exactly what the emulator gets.
+  - The launch profiles `https-azure` and `https-connectionstring` set `Messaging__Broker`, so switching is choosing a
+    profile.
+  - `AddMessaging()` returns `IResourceBuilder<IResourceWithConnectionString>`, so the function is wired with
+    `WithMessagingReference()`: for a Service Bus resource it calls the Functions-specific `WithReference` (which
+    injects `messaging__fullyQualifiedNamespace`); the generic overload would compile and inject an endpoint the
+    trigger cannot use.
+- **One topology for every broker.** `Topology.cs` is the only definition. The AppHost applies it to the emulator
+  and to the namespaces it provisions (topics, subscriptions, `Topology.MaxDeliveryCount`, one correlation rule per
+  `Subject`); `tools/servicebus-provision.cs` applies the same model to an existing namespace. The tool is
+  idempotent and reconciles: it creates what is missing, aligns the subscription settings and leaves exactly the
+  declared rules (the catch-all `$Default` rule is removed). It needs Manage rights, which the services never get.
 - **docker-compose.** The emulator and its SQL Server are in the `emulator` compose profile, the services depend on
   it with `required: false`, and `ConnectionStrings__messaging` is `${SERVICEBUS_CONNECTION:-<emulator>}`. Switching
   is two `.env` lines: `COMPOSE_PROFILES=emulator` or `COMPOSE_PROFILES=` plus `SERVICEBUS_CONNECTION`.
@@ -50,8 +60,10 @@ The code did not have to change for it. Ordering and Inventory (`AddServiceBusMe
     runs. Delete the resource group Aspire created when done (`az group delete --name <rg>`).
   - Local auth is enabled on the namespace for compose's sake, which is a weaker posture than Entra ID only. It is
     limited to one send/listen policy; a namespace used only through Aspire could turn it off again.
-  - Compose in Azure mode depends on Aspire having provisioned the namespace first (or on the same topology created
-    by other means).
+  - Compose against Azure needs a namespace that already has the topology: provisioned by Aspire (`Azure`) or by
+    `tools/servicebus-provision.cs` (`ConnectionString`).
+  - With an existing namespace the topology is applied by hand, once and after every change to `Topology.cs`;
+    nothing warns if it drifts (running the tool with `--dry-run` shows it).
   - `docker/servicebus/config.json` still mirrors `Topology.cs` by hand, for the emulator under compose only.
 - **Neutral**
   - Azurite keeps emulating the Functions host storage in both modes: it is host bookkeeping, not messaging.
@@ -62,8 +74,8 @@ The code did not have to change for it. Ordering and Inventory (`AddServiceBusMe
 | Option | Why not (here) |
 |---|---|
 | `if (emulator)` in the services (e.g. two `IEventBus` implementations) | The SDK already talks to both; a branch in the code would be the only thing that could make them differ |
-| `RunAsExisting` on a namespace created in the portal | Topology and roles would have to be kept in step outside the code; still possible later by adding it to `AddMessaging` |
-| A plain `AddConnectionString("messaging")` with a SAS key in user-secrets | Needs a separate provisioning script (a second source of truth) and puts a key in every Aspire run |
+| `RunAsExisting` on a namespace created in the portal | Needs Azure provisioning rights and the resource group at every run, where a connection string is all the services need; still possible later by adding it to `AddMessaging` |
+| Provisioning the topology from the AppHost at startup in `ConnectionString` mode | Every run would need a Manage key; a one-off tool keeps that key out of the running system |
 | Entra ID for compose too (service principal secret in `.env`) | Still a secret in `.env`, with broader scope and more setup than a send/listen policy |
 
 Revisit when the services are deployed to Azure (Container Apps or AKS): they would use managed identities, and

@@ -227,10 +227,29 @@ emulador):
 dotnet run --project src/AppHost --launch-profile https-azure
 ```
 
-**docker-compose.** Ejecuta Aspire en modo Azure una vez para que exista el namespace, lee la clave de su política
-`compose` (solo envío/escucha) y cambia las dos líneas de Service Bus de `.env` a la Opción B
-([`.env.example`](.env.example)): `COMPOSE_PROFILES=` (el emulador no arranca) y
-`SERVICEBUS_CONNECTION=<connection string de compose>`.
+**Un namespace existente (p. ej. creado en el portal).** Tiene que ser de nivel Standard. Aplica una vez la
+topología de `Topology.cs` con una connection string con permisos Manage (solo en ese comando, nunca guardada). Es
+idempotente, `--dry-run` muestra antes los cambios y se vuelve a ejecutar tras cada cambio en `Topology.cs`:
+
+```bash
+SERVICEBUS_CONNECTION="<connection string de RootManageSharedAccessKey>" dotnet run tools/servicebus-provision.cs
+```
+
+Para la aplicación, crea en el portal una shared access policy con Send + Listen, guarda su connection string en los
+user-secrets del AppHost y ejecuta con el perfil `https-connectionstring` (`Messaging:Broker=ConnectionString`):
+
+```bash
+dotnet user-secrets --project src/AppHost set ConnectionStrings:messaging "<connection string Send + Listen>"
+```
+
+```bash
+dotnet run --project src/AppHost --launch-profile https-connectionstring
+```
+
+**docker-compose.** El namespace necesita antes la topología (Aspire en modo Azure, o la herramienta de arriba).
+Luego cambia las dos líneas de Service Bus de `.env` a la Opción B ([`.env.example`](.env.example)):
+`COMPOSE_PROFILES=` (el emulador no arranca) y `SERVICEBUS_CONNECTION=<connection string Send + Listen>` — para un
+namespace aprovisionado por Aspire, la clave de su política `compose`.
 
 **Costo.** El namespace se factura mientras exista. Borra el resource group que creó Aspire al terminar
 (`az group delete --name <rg>`). [`tools/servicebus-smoke.cs`](tools/servicebus-smoke.cs) puede inspeccionarlo con

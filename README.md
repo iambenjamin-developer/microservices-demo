@@ -223,9 +223,29 @@ emulator):
 dotnet run --project src/AppHost --launch-profile https-azure
 ```
 
-**docker-compose.** Run Aspire in Azure mode once so the namespace exists, then read the key of its send/listen
-`compose` policy and switch the two Service Bus lines in `.env` to Option B ([`.env.example`](.env.example)):
-`COMPOSE_PROFILES=` (the emulator does not start) and `SERVICEBUS_CONNECTION=<compose connection string>`.
+**An existing namespace (e.g. created in the portal).** It must be Standard tier. Apply the topology from
+`Topology.cs` once, with a connection string that has Manage rights (only in that command, never stored). It is
+idempotent, `--dry-run` shows the changes first, and it is rerun after every change to `Topology.cs`:
+
+```bash
+SERVICEBUS_CONNECTION="<RootManageSharedAccessKey connection string>" dotnet run tools/servicebus-provision.cs
+```
+
+For the application, create a Send + Listen shared access policy in the portal, keep its connection string in the
+AppHost user-secrets and run with the `https-connectionstring` launch profile (`Messaging:Broker=ConnectionString`):
+
+```bash
+dotnet user-secrets --project src/AppHost set ConnectionStrings:messaging "<Send + Listen connection string>"
+```
+
+```bash
+dotnet run --project src/AppHost --launch-profile https-connectionstring
+```
+
+**docker-compose.** The namespace needs the topology first (Aspire in Azure mode, or the tool above). Then switch the
+two Service Bus lines in `.env` to Option B ([`.env.example`](.env.example)): `COMPOSE_PROFILES=` (the emulator does
+not start) and `SERVICEBUS_CONNECTION=<Send + Listen connection string>` — for a namespace Aspire provisioned, the key
+of its `compose` policy.
 
 **Cost.** The namespace is billed while it exists. Delete the resource group Aspire created when you are done
 (`az group delete --name <rg>`). [`tools/servicebus-smoke.cs`](tools/servicebus-smoke.cs) can peek at it with
