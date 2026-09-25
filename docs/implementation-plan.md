@@ -274,6 +274,8 @@ push, and update the **Status** column and the phase notes below.
 | 11 | Mapperly | ✅ Done | Mapster replaced by Mapperly in Ordering and Inventory (mappers + projections), tests, ADR 0006 superseding 0005; project-level dotnet agent skills | `refactor(ordering,inventory): replace mapster with mapperly` |
 | 12 | Controllers | ✅ Done | Inventory and Ordering move to MVC controllers (Catalog and Gateway stay on minimal APIs), MVC ProblemDetails + validation filter in `BuildingBlocks.Web`, ADR 0007; HTTP contract unchanged | `feat(building-blocks): ...`, `refactor(inventory): ...`, `refactor(ordering): ...` |
 | 13 | Service layer | ✅ Done | Inventory moves from vertical slices to a classic layered service: `StockController` → `IStockService` → `StockService`, shared by the HTTP API and the `OrderPlaced` consumer; controller unit tests with NSubstitute; `Inventory.IntegrationTests` (Testcontainers) pinning the HTTP contract; ADR 0008 (amends 0002). HTTP and messaging contracts unchanged | `test(inventory): ...`, `refactor(inventory): ...`, `docs: ...` |
+| 14 | Real Azure Service Bus | ✅ Done | Broker switchable between the emulator and a real namespace at the infrastructure edge only: `AddMessaging()` + `Messaging:Broker` + `https-azure` launch profile (Aspire provisions the namespace, Entra ID), compose `emulator` profile + `SERVICEBUS_CONNECTION` (send/listen SAS), smoke tool with `SERVICEBUS_NAMESPACE`, ADR 0009; service code unchanged | `feat(apphost): ...`, `build(docker): ...`, `chore(tools): ...`, `docs: ...` |
+| 15 | Existing Service Bus namespace | ✅ Done | `Messaging:Broker=ConnectionString` + `https-connectionstring` launch profile (`AddConnectionString`, user-secrets), `WithMessagingReference()` for the function, `tools/servicebus-provision.cs` (idempotent topology from `Topology.cs`, `--dry-run`), `Topology.MaxDeliveryCount`, ADR 0009 amended | `feat(apphost): ...`, `chore(tools): ...`, `docs: ...` |
 
 ### Phase notes
 
@@ -416,6 +418,22 @@ Decisions and facts discovered during implementation that the next phases depend
   - Controller unit tests (`Inventory.UnitTests/Controllers`, +4) mock `IStockService` with NSubstitute. `Problem(Error)` builds its body through `ProblemDetailsFactory`, so the test controller gets a `DefaultHttpContext` whose services come from `AddApiProblemDetails()` + `AddApiControllers()` (the real setup, not a fake factory).
   - CI runs both integration projects in the Testcontainers step.
   - Verified: build clean with warnings as errors (Debug and Release); 169 tests green (140 fast + 29 integration; was 152). Not run this phase: Aspire end-to-end and the Postman collections (the HTTP contract is pinned by the integration tests and the OpenAPI comparison).
+- **Phase 14**
+  - The services were already broker-agnostic (they only read the `messaging` connection), so the switch lives only in the AppHost and in compose (ADR 0009). **Never branch on the broker in service code.**
+  - AppHost: the Service Bus block moved to `src/AppHost/MessagingResourceExtensions.cs` (`builder.AddMessaging(ContainerPrefix)`). `Messaging:Broker` = `Emulator` (default when unset) | `Azure`; anything else throws at startup. The emulator branch keeps the container names and the `-mssql` sidecar lookup (that lookup must stay inside the branch: the sidecar does not exist in Azure mode). The topology loop is shared by both brokers.
+  - Azure mode: no `RunAsEmulator`, so Aspire provisions a Standard namespace via Bicep (subscription/location from the AppHost user-secrets `Azure:SubscriptionId`, `Azure:Location`, `Azure:CredentialSource=AzureCli`) and assigns *Azure Service Bus Data Owner* to the developer. Services get `ConnectionStrings__messaging=<endpoint>` and the function `messaging__fullyQualifiedNamespace`; all use `DefaultAzureCredential`. `ConfigureInfrastructure` sets `DisableLocalAuth = false` and adds the namespace policy `compose` (Send + Listen) for docker-compose.
+  - Launch profile `https-azure` = `https` + `Messaging__Broker=Azure`.
+  - docker-compose: `servicebus` and `servicebus-sql` are in the `emulator` profile; the services depend on `servicebus` with `required: false`; `ConnectionStrings__messaging` is `${SERVICEBUS_CONNECTION:-<emulator>}`; `SERVICEBUS_SQL_PASSWORD` is no longer enforced by compose (SQL Server refuses to start without a valid one when the profile is on). `.env.example` has Option A (emulator, default) and Option B (Azure).
+  - `tools/servicebus-smoke.cs`: `SERVICEBUS_NAMESPACE` connects with `DefaultAzureCredential`; `SERVICEBUS_CONNECTION` still takes a full connection string.
+  - Not changed: Azurite (Functions host storage) in both modes; integration tests (fake `IEventBus`, no broker).
+  - Verified: build clean with warnings as errors; 169 tests green (unchanged). Aspire, emulator mode: an order within stock → `Confirmed`, one beyond it → `Rejected`, notification stored; containers still `msdemo-servicebus` / `msdemo-servicebus-sql`. Azure mode: the generated Bicep (manifest publisher) holds a Standard namespace with `disableLocalAuth: false`, the 2 topics, 3 subscriptions, 5 correlation rules and the `compose` Send/Listen policy; services get the endpoint, the function `messaging__fullyQualifiedNamespace`. `Messaging:Broker=Foo` fails at startup. `docker compose config` resolves both modes (with and without the `emulator` profile).
+- **Phase 15**
+  - Third broker for Aspire: `Messaging:Broker=ConnectionString` (launch profile `https-connectionstring`) uses `builder.AddConnectionString("messaging")`, read from `ConnectionStrings:messaging` in the AppHost user-secrets (a secret parameter, asked for in the dashboard if missing). Aspire creates nothing in Azure; every consumer, the function included, gets `ConnectionStrings__messaging`.
+  - `AddMessaging()` now returns `IResourceBuilder<IResourceWithConnectionString>`. **The function must be wired with `WithMessagingReference(serviceBus)`**, never `WithReference`: for a Service Bus resource the helper calls the Functions-specific overload (`messaging__fullyQualifiedNamespace` in Azure mode); the generic overload compiles but injects an endpoint the trigger cannot use. Checked in the generated manifests of both modes.
+  - `tools/servicebus-provision.cs` (`#:project` on `BuildingBlocks.Contracts`) applies `Topology.cs` to an existing namespace with `ServiceBusAdministrationClient`: creates missing topics/subscriptions (a subscription is created with its first rule, so it never gets `$Default`), aligns `MaxDeliveryCount`/dead-lettering, deletes undeclared rules and adds the missing ones. `--dry-run` only prints. Needs Manage rights (`SERVICEBUS_CONNECTION`) or Entra ID Data Owner (`SERVICEBUS_NAMESPACE`); the application uses a Send + Listen policy.
+  - `Topology.MaxDeliveryCount` (5) is shared by the AppHost and the tool.
+  - The emulator also accepts the administration client, on its management port 5300 (a random host port under Aspire, e.g. `docker ps`), not on the AMQP port 5672.
+  - Verified: build clean; all tests green. Tool against the emulator: no changes on the Aspire-provisioned topology; after deleting a rule, adding `$Default` and changing `MaxDeliveryCount` it applied exactly those 3 fixes; after deleting a subscription it recreated it with both rules; a second run reported no changes. Aspire in `ConnectionString` mode (with the emulator's connection string): order within stock → `Confirmed`, beyond it → `Rejected`, both notifications stored and e-mailed. Not run against a real Azure namespace.
 - **Configuration**
   - `.env.example` (committed) lists every variable for docker-compose; `.env` (git-ignored) holds local values. docker-compose maps them to the settings each service reads, so every service block shows what it needs.
   - Aspire does not read `.env`: AppHost parameters (`builder.AddParameter(name, secret: true)`) live in the AppHost user-secrets. Aspire already stores its generated `postgres-password` and `messaging-sql-pwd` there.
@@ -444,6 +462,7 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 6. `0006-object-mapping-mapperly.md` — Mapperly (source-generated, compile-time checked, `IQueryable` projections from the same config) replaces Mapster in Ordering and Inventory.
 7. `0007-controllers-for-inventory-and-ordering.md` — MVC controllers for Inventory and Ordering, minimal APIs for Catalog and the Gateway, one error/validation contract for both.
 8. `0008-service-layer-for-inventory.md` — Inventory uses a service layer (`IStockService`) instead of vertical slices, to show the controller + service interface style next to Catalog's slices and Ordering's CQRS handlers; amends 0002.
+9. `0009-switchable-service-bus-broker.md` — the broker (emulator or a real Azure namespace) is chosen only at the infrastructure edge: `Messaging:Broker` in the AppHost, compose profiles + `SERVICEBUS_CONNECTION`.
 
 ## 11. Demo script (5–10 minutes)
 
@@ -465,6 +484,7 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 | Azure Functions Core Tools missing locally | Install `azure-functions-core-tools@4` before phase 7 |
 | Gmail rejects SMTP login | Use an App Password; Mailpit remains the default so the demo never depends on Gmail |
 | Time | Strict phase order and cut list (section 9) |
+| A real Service Bus namespace keeps billing after the demo | Emulator stays the default; README and ADR 0009 say to delete the resource group Aspire created |
 
 ## 13. Prerequisites
 
@@ -472,3 +492,4 @@ If time runs short, cut in this order: phase 8 polish → docker-compose (keep D
 - Docker Desktop (running)
 - Node.js 22+
 - Azure Functions Core Tools v4
+- Optional, only for a real Service Bus (phase 14): Azure CLI (`az login`) and an Azure subscription

@@ -9,15 +9,25 @@
 # strings and service discovery addresses) is written down here instead.
 #
 # Run one or the other: they publish the same host ports (5100-5104, 1025, 8025, 5672).
+#
+# Service Bus broker: the emulator (COMPOSE_PROFILES=emulator, the default in .env.example) or a real
+# Azure namespace (COMPOSE_PROFILES empty + SERVICEBUS_CONNECTION). Only these two .env lines change;
+# the services read the same ConnectionStrings__messaging either way.
 # =====================================================================================
 
 name: microservices-demo
 
 # ---- Shared settings -----------------------------------------------------------------
-# The emulator only accepts this fixed development key; UseDevelopmentEmulator=true tells the
-# Service Bus SDK to speak plain AMQP to port 5672 instead of looking for a real namespace.
+# Defaults to the emulator, which only accepts this fixed development key; UseDevelopmentEmulator=true
+# tells the Service Bus SDK to speak plain AMQP to port 5672 instead of looking for a real namespace.
+# SERVICEBUS_CONNECTION replaces it with a real namespace (the send/listen "compose" policy).
 x-servicebus-connection: &servicebus-connection
-  Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+  ${SERVICEBUS_CONNECTION:-Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;}
+
+# The emulator is optional: with a real namespace its profile is off and nothing waits for it.
+x-servicebus-dependency: &servicebus-dependency
+  condition: service_started
+  required: false
 
 x-service-environment: &service-environment
   # The Gateway signs the access tokens and every service validates them, so all of them need the
@@ -51,19 +61,23 @@ services:
       retries: 20
 
   # The Service Bus emulator keeps its state in a SQL Server sidecar and waits for it on its own
-  # (SQL_WAIT_INTERVAL), which is why there is no health gate between the two.
+  # (SQL_WAIT_INTERVAL), which is why there is no health gate between the two. Both only start with
+  # the "emulator" profile. The password is not enforced here because a run against Azure does not
+  # need it; with the profile on, SQL Server refuses to start without a valid one.
   servicebus-sql:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: [emulator]
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:?set SERVICEBUS_SQL_PASSWORD in .env}
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:-}
 
   servicebus:
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.0
+    profiles: [emulator]
     environment:
       ACCEPT_EULA: "Y"
       SQL_SERVER: servicebus-sql
-      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:?set SERVICEBUS_SQL_PASSWORD in .env}
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:-}
     volumes:
       # Topics, subscriptions and correlation rules. The AppHost provisions the same topology from
       # BuildingBlocks.Contracts/Topology.cs; this file has to be kept in step with it by hand.
@@ -137,8 +151,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      servicebus:
-        condition: service_started
+      servicebus: *servicebus-dependency
     restart: unless-stopped
 
   inventory:
@@ -155,8 +168,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      servicebus:
-        condition: service_started
+      servicebus: *servicebus-dependency
     restart: unless-stopped
 
   notifications:
@@ -182,8 +194,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      servicebus:
-        condition: service_started
+      servicebus: *servicebus-dependency
       azurite:
         condition: service_started
     restart: unless-stopped

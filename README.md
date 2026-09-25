@@ -138,6 +138,7 @@ What makes it reliable:
 - Docker Desktop, running, with **≥ 6 GB RAM** (the Service Bus emulator needs a SQL Server container)
 - Node.js 22+
 - Azure Functions Core Tools v4 (`npm i -g azure-functions-core-tools@4`) — only for the Aspire path
+- Azure CLI and an Azure subscription — only to run against a real Service Bus (optional, see below)
 
 ### Option A — .NET Aspire (development)
 
@@ -199,6 +200,56 @@ By default every e-mail is captured by Mailpit. To deliver through Gmail, set `E
 `Email:Port=587`, `Email:UseStartTls=true` and a Gmail **App Password**, and point `DemoUsers:bar:Email` at a real
 inbox. [`.env.example`](.env.example) shows the exact variables; `Email:Enabled=false` switches to the Null Object
 sender (the notification is still stored, nothing is sent).
+
+### Real Azure Service Bus (optional)
+
+The emulator is the default. The services only read the `messaging` connection, so switching to a real namespace is
+an infrastructure choice made in the AppHost or in `.env` ([ADR 0009](docs/adr/0009-switchable-service-bus-broker.md)).
+
+**Aspire.** Aspire provisions a Standard namespace with the topics, subscriptions and filters from `Topology.cs`, and
+gives your Azure account the *Azure Service Bus Data Owner* role on it: no key is involved. Once:
+
+```bash
+az login
+dotnet user-secrets --project src/AppHost set Azure:SubscriptionId <subscription-id>
+dotnet user-secrets --project src/AppHost set Azure:Location <region, e.g. westeurope>
+dotnet user-secrets --project src/AppHost set Azure:CredentialSource AzureCli
+```
+
+Then run with the `https-azure` launch profile (it sets `Messaging:Broker=Azure`; the default profiles stay on the
+emulator):
+
+```bash
+dotnet run --project src/AppHost --launch-profile https-azure
+```
+
+**An existing namespace (e.g. created in the portal).** It must be Standard tier. Apply the topology from
+`Topology.cs` once, with a connection string that has Manage rights (only in that command, never stored). It is
+idempotent, `--dry-run` shows the changes first, and it is rerun after every change to `Topology.cs`:
+
+```bash
+SERVICEBUS_CONNECTION="<RootManageSharedAccessKey connection string>" dotnet run tools/servicebus-provision.cs
+```
+
+For the application, create a Send + Listen shared access policy in the portal, keep its connection string in the
+AppHost user-secrets and run with the `https-connectionstring` launch profile (`Messaging:Broker=ConnectionString`):
+
+```bash
+dotnet user-secrets --project src/AppHost set ConnectionStrings:messaging "<Send + Listen connection string>"
+```
+
+```bash
+dotnet run --project src/AppHost --launch-profile https-connectionstring
+```
+
+**docker-compose.** The namespace needs the topology first (Aspire in Azure mode, or the tool above). Then switch the
+two Service Bus lines in `.env` to Option B ([`.env.example`](.env.example)): `COMPOSE_PROFILES=` (the emulator does
+not start) and `SERVICEBUS_CONNECTION=<Send + Listen connection string>` — for a namespace Aspire provisioned, the key
+of its `compose` policy.
+
+**Cost.** The namespace is billed while it exists. Delete the resource group Aspire created when you are done
+(`az group delete --name <rg>`). [`tools/servicebus-smoke.cs`](tools/servicebus-smoke.cs) can peek at it with
+`SERVICEBUS_NAMESPACE=<namespace>.servicebus.windows.net`.
 
 ### Postman
 

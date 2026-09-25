@@ -13,6 +13,7 @@ revisit it. Format: Status, Context, Decision, Consequences, Alternatives consid
 | [0006](0006-object-mapping-mapperly.md) | Mapperly (source-generated, compile-time checked) replaces Mapster in Ordering and Inventory | Accepted |
 | [0007](0007-controllers-for-inventory-and-ordering.md) | MVC controllers for Inventory and Ordering, minimal APIs for Catalog and the Gateway | Accepted |
 | [0008](0008-service-layer-for-inventory.md) | Service layer (controller → `IStockService` → `StockService`) for Inventory, shared by the API and the consumer | Accepted |
+| [0009](0009-switchable-service-bus-broker.md) | Service Bus broker switchable between the local emulator and a real Azure namespace, chosen only at the infrastructure edge | Accepted |
 
 A new ADR takes the next number. A decision that changes is not edited away: the old record is marked
 *Superseded by NNNN* and the new one explains why.
