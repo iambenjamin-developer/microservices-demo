@@ -13,6 +13,32 @@
         "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22180"
       }
     },
+    "https-azure": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "https://localhost:17286;http://localhost:15244",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21139",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22180",
+        "Messaging__Broker": "Azure"
+      }
+    },
+    "https-connectionstring": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "https://localhost:17286;http://localhost:15244",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21139",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22180",
+        "Messaging__Broker": "ConnectionString"
+      }
+    },
     "http": {
       "commandName": "Project",
       "dotnetRunMessages": true,

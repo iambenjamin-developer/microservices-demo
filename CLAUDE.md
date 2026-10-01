@@ -9,7 +9,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 
 ## Conventions
 
-- **Language:** all code, comments, commit messages and documentation are in English. The only exceptions are the README translations: `README_pt.md` (Portuguese) and `README_es.md` (Spanish).
+- **Language:** all code, comments, commit messages and documentation are in English. The only exceptions are the README translations: `README_pt.md` (Portuguese) and `README_es.md` (Spanish), and the Spanish interview practice guide `docs/faq_es.md`. When code quoted in `docs/faq_es.md` changes, update the snippet (and its `#L` line link) in the same commit.
 - **Commits:** Conventional Commits (`feat(ordering): ...`, `test: ...`, `docs: ...`), small and focused.
 - **Workflow:** implement one phase at a time (one session per phase); stop at the end of each phase for human review before committing. When a phase is approved, update its Status and Phase notes in `docs/implementation-plan.md` in the same commit.
 - **Catalog data is fictional.** Do not use real beer brands.
@@ -28,6 +28,7 @@ The full plan, scope and phase list live in [docs/implementation-plan.md](docs/i
 - **Database per service.** A service never reads another service's database.
 - Services integrate **asynchronously** through Azure Service Bus integration events (`BuildingBlocks.Contracts`) and publish them **only through the transactional outbox**.
 - Consumers must be **idempotent** (inbox table keyed by `MessageId`).
+- **Broker selection (ADR 0009):** the emulator or a real Azure namespace is chosen only at the infrastructure edge — `Messaging:Broker` (`Emulator` | `Azure` | `ConnectionString`, launch profiles `https-azure` / `https-connectionstring`) in the AppHost, the `emulator` compose profile + `SERVICEBUS_CONNECTION` in docker-compose. Services only read the `messaging` connection and must never branch on which broker they have. The topology comes only from `Topology.cs`: the AppHost applies it to the emulator and to the namespaces it provisions, `tools/servicebus-provision.cs` to an existing one. Wire the Notifications function with `WithMessagingReference()`, never `WithReference`.
 - **Ordering** follows Clean Architecture: `Domain` has no dependencies; `Application` depends only on `Domain`; `Infrastructure` and `Api` are outer layers. Enforced by `tests/Architecture.Tests`.
 - **Catalog** uses Vertical Slice Architecture (one folder per feature: endpoint + request + handler + validator).
 - **Inventory** uses a service layer (ADR 0008): `StockController` → `IStockService` → `StockService` (internal, sealed, scoped). Every stock operation goes through `IStockService`, from the HTTP API and from the `OrderPlaced` consumer; the controller never touches the `DbContext`. Methods that save say so (`Update...`); methods called inside the consumer pipeline only stage tracked changes (`Stage...`) and never call `SaveChangesAsync`. Controller unit tests mock `IStockService`; the service itself is covered by `Inventory.IntegrationTests`.

@@ -5,11 +5,15 @@ namespace BuildingBlocks.Contracts;
 
 /// <summary>
 /// Single source of truth for the Service Bus topology: which topic each event is published to
-/// and which subscriptions exist. Shared by the AppHost (to provision the emulator) and the services.
+/// and which subscriptions exist. Shared by the services, the AppHost (which provisions the emulator and the
+/// namespaces it creates) and tools/servicebus-provision.cs (for a namespace created by hand).
 /// </summary>
 public static class Topology
 {
     public const string ServiceBusConnectionName = "messaging";
+
+    /// <summary>Deliveries before a message is dead-lettered, for every subscription.</summary>
+    public const int MaxDeliveryCount = 5;
 
     public static class Topics
     {

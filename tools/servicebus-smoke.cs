@@ -1,17 +1,21 @@
 #:package Azure.Messaging.ServiceBus@7.20.2
+#:package Azure.Identity@1.21.0
 #:property ManagePackageVersionsCentrally=false
 #:property PublishAot=false
 
-// Manual smoke test for the local Azure Service Bus emulator started by the Aspire AppHost.
+// Manual smoke test for the Service Bus the Aspire AppHost runs: the local emulator or a real namespace.
 //
 //   dotnet run tools/servicebus-smoke.cs -- send    <topic> <subject>
 //   dotnet run tools/servicebus-smoke.cs -- peek    <topic> <subscription>
 //   dotnet run tools/servicebus-smoke.cs -- receive <topic> <subscription>
 //   dotnet run tools/servicebus-smoke.cs -- dlq     <topic> <subscription>
 //
-// The connection string defaults to the emulator; override it with SERVICEBUS_CONNECTION.
+// The connection defaults to the emulator. Point it somewhere else with either:
+//   SERVICEBUS_NAMESPACE   <namespace>.servicebus.windows.net — Entra ID (az login), no key needed
+//   SERVICEBUS_CONNECTION  a full connection string (e.g. the "compose" SAS policy)
 
 using System.Text.Json;
+using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 
 const string EmulatorConnection =
@@ -24,9 +28,12 @@ if (args.Length < 3)
 }
 
 var (command, topic, target) = (args[0], args[1], args[2]);
+var fullyQualifiedNamespace = Environment.GetEnvironmentVariable("SERVICEBUS_NAMESPACE");
 var connectionString = Environment.GetEnvironmentVariable("SERVICEBUS_CONNECTION") ?? EmulatorConnection;
 
-await using var client = new ServiceBusClient(connectionString);
+await using var client = string.IsNullOrWhiteSpace(fullyQualifiedNamespace)
+    ? new ServiceBusClient(connectionString)
+    : new ServiceBusClient(fullyQualifiedNamespace, new DefaultAzureCredential());
 
 switch (command)
 {
